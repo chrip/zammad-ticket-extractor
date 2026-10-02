@@ -39,7 +39,7 @@ is stored: the mapping exists only while one export runs.
 | Support agents, only with "Keep support agent names" off or when Zammad roles are not readable | `Agent-1` |
 | Names after a salutation ("Hi Tom", "Dear Mr. Weber", "Thanks, Anna") | `Person-N` |
 | Organizations, with and without legal form | `Org-1` |
-| Mail addresses, always, the support team's own included | `customer-1@example.invalid`, `agent-1@example.invalid`, `user-N@example.invalid` |
+| Mail addresses, always, the support team's own included | `customer-1@example.com`, `agent-1@example.com`, `user-N@example.com` |
 | Customer host names and URLs (path user IDs, share tokens, query values) | `cloud.domain1.example`, `host1.domain1.example`, `/s/SHARE1`, `?dir=[redacted]` |
 | URLs on internal domains that are not public (tracker, CRM, portal, internal cloud) | `[internal-link-N]` |
 | Public IPv4 / private IPv4 / IPv6 / MAC | `192.0.2.x` / `10.255.x.x` / `2001:db8::x` / `02:00:00:00:..` |

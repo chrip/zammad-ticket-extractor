@@ -147,7 +147,7 @@ function createPseudonymizer(config = {}) {
     if (role === 'agent' && keepAgents && keep) {
       const full = name || `${firstname} ${lastname}`.trim();
       for (const part of [full, firstname, lastname, ...full.split(/[\s,]+/)]) protect(part);
-      if (email) assign('email', email.toLowerCase(), `${pseudonym.toLowerCase()}@example.invalid`);
+      if (email) assign('email', email.toLowerCase(), `${pseudonym.toLowerCase()}@example.com`);
       return full || pseudonym;
     }
     const full = name || `${firstname} ${lastname}`.trim();
@@ -162,7 +162,7 @@ function createPseudonymizer(config = {}) {
       if (part && !nameStopwords.has(part.toLowerCase().replace(/\.$/, ''))) addTerm(part, pseudonym, cap);
     }
     if (email) {
-      assign('email', email.toLowerCase(), `${pseudonym.toLowerCase()}@example.invalid`);
+      assign('email', email.toLowerCase(), `${pseudonym.toLowerCase()}@example.com`);
       // "c.schaefer" identifies a person, "info" or "support" does not.
       const local = email.split('@')[0];
       if (/[a-z]/i.test(local) && local.length >= 4 && !genericMailboxes.has(local.toLowerCase())) addTerm(local, pseudonym.toLowerCase());
@@ -227,7 +227,7 @@ function createPseudonymizer(config = {}) {
 
   // Every address, also the support team's own: mailboxes and staff alike.
   function email(address) {
-    return lookup('email', address.toLowerCase(), n => `user-${n}@example.invalid`);
+    return lookup('email', address.toLowerCase(), n => `user-${n}@example.com`);
   }
 
   function matchesHost(h, pattern) {

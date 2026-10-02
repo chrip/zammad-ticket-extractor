@@ -18,12 +18,12 @@ function setup() {
 test('known people, their mail and phone get consistent pseudonyms', () => {
   const p = setup();
   const out = p.text('Hi Mr. Smith, thanks John! Mail j.smith@acme-corp.com or call +1 415 555 0134. Best, Anna Young');
-  assert.equal(out, 'Hi Mr. Customer-1, thanks Customer-1! Mail customer-1@example.invalid or call [phone-1]. Best, Anna Young');
+  assert.equal(out, 'Hi Mr. Customer-1, thanks Customer-1! Mail customer-1@example.com or call [phone-1]. Best, Anna Young');
 });
 
 test('support agents stay readable by name, their mails are pseudonymized', () => {
   const p = setup();
-  assert.equal(p.text('Hi Anna, thanks. Cc: anna.young@supportco.io, office-team@supportco.io'), 'Hi Anna, thanks. Cc: agent-1@example.invalid, user-1@example.invalid');
+  assert.equal(p.text('Hi Anna, thanks. Cc: anna.young@supportco.io, office-team@supportco.io'), 'Hi Anna, thanks. Cc: agent-1@example.com, user-1@example.com');
 });
 
 test('an agent the caller could not confirm as staff is pseudonymized', () => {
@@ -35,7 +35,7 @@ test('an agent the caller could not confirm as staff is pseudonymized', () => {
 test('with keepAgents off, agents are pseudonymized too', () => {
   const p = createPseudonymizer({ keepAgents: false });
   p.addPerson({ firstname: 'Anna', lastname: 'Young', email: 'anna.young@supportco.io', role: 'agent' });
-  assert.equal(p.text('Hi Anna, write to anna.young@supportco.io'), 'Hi Agent-1, write to agent-1@example.invalid');
+  assert.equal(p.text('Hi Anna, write to anna.young@supportco.io'), 'Hi Agent-1, write to agent-1@example.com');
 });
 
 test('the support company and configured product names are never taken for a person', () => {
