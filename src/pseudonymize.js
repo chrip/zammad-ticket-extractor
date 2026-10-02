@@ -422,7 +422,8 @@ function createPseudonymizer(config = {}) {
 
     // 3. URLs with scheme
     // balanced parentheses belong to the URL: ".../Support%20(LTS)?fileId=1"
-    s = s.replace(/\b[a-z][a-z0-9+.-]*:\/\/(?:[^\s<>"'`()\[\]{}]|\([^\s<>"'`()]*\))+/gi, m => {
+    // no dots in the scheme, so "Firefox.https://..." keeps "Firefox." as text
+    s = s.replace(/(?<![a-z0-9+-])[a-z][a-z0-9+-]*:\/\/(?:[^\s<>"'`()\[\]{}]|\([^\s<>"'`()]*\))+/gi, m => {
       const trail = m.match(/[.,;:!?]+$/)?.[0] || '';
       return hold(url(m.slice(0, m.length - trail.length))) + trail;
     });

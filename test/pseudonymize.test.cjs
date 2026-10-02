@@ -140,6 +140,12 @@ test('URLs: host, user path, share token and query values', () => {
   assert.equal(out, 'See https://cloud.domain1.example/remote.php/dav/files/user-1/Docs/a.txt?foo=[redacted] and https://cloud.domain1.example/index.php/s/SHARE1.');
 });
 
+test('text glued to the front of a URL stays text', () => {
+  const p = setup();
+  assert.equal(p.text('not only Firefox.https://help.supportco.io/t/246654'), 'not only Firefox.https://help.supportco.io/t/246654');
+  assert.equal(p.text('see:https://crm.supportco.io/deal/1'), 'see:[internal-link-1]');
+});
+
 test('public domains are kept with their path', () => {
   const p = setup();
   const s = 'Docs: https://help.supportco.io/server/latest/admin_manual/ and https://github.com/supportco/server/issues/123';
