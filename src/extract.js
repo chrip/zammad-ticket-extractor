@@ -223,11 +223,13 @@ async function extractAndCopy(options = {}) {
       el.appendChild(document.createTextNode('\n'));
     });
     // For DIVs, only add newline if it's a top-level block (not nested in another div)
-    clone.querySelectorAll('DIV').forEach(el => {
+    clone.querySelectorAll('DIV, PRE').forEach(el => {
       if (!el.childNodes.length || (el.textContent || '').trim().length === 0) return;
-      // Only add newline if parent is not a DIV or is the root richtext-content
+      // Top-level blocks end a line, and so does a nested line without blocks of
+      // its own: code blocks are one DIV per line ("apache2 -v", "apache2ctl -M").
       const parent = el.parentElement;
-      if (!parent || parent.tagName !== 'DIV' || parent.classList.contains('richtext-content')) {
+      const isLine = !el.querySelector('div, p, pre, li, table');
+      if (!parent || parent.tagName !== 'DIV' || parent.classList.contains('richtext-content') || isLine) {
         el.appendChild(document.createTextNode('\n'));
       }
     });

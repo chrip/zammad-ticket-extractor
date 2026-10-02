@@ -54,6 +54,10 @@ function createPseudonymizer(config = {}) {
 
   const keyRx = new RegExp(`((?:["']?)(?:[\\w.-]*(?:${secretKeys})[\\w.-]*)["']?\\s*(?:=>|:|=)\\s*)(["'])((?:\\\\.|(?!\\2).)*)\\2`, 'gi');
   const bareKeyRx = new RegExp(`(\\b(?:${secretKeys})\\s*[=:]\\s*)([^\\s"',;&]{3,})`, 'gi');
+  // Free text, English and German: "Passwort: x", "Password for the share: x",
+  // "the password is x", "das Kennwort lautet x". A held value (\uE000) is a URL.
+  const proseSecretRx = /(\b(?:(?:pass(?:wor[dt]|code|phrase)|kennwort|zugangscode|access[ -]code)\b[^\n=:]{0,30}?|(?:pass|passwd|pwd|pw|pin|secret|token)\s*)[=:]\s*)(["']?)(?!\uE000)([^\s"']{3,})\2/gi;
+  const proseIsRx = /(\b(?:password|passwort|kennwort|passcode|passphrase|pin)\b[^\n.=:]{0,20}?\b(?:is|ist|lautet|was|war)\s+)(["']?)(?!\uE000)([^\s"',;]{3,}?)\2(?=[\s"',;]|\.?$|\.\s)/gim;
 
   const maps = new Map();                         // kind -> Map(original key -> pseudonym)
   const counters = new Map();
@@ -157,6 +161,7 @@ function createPseudonymizer(config = {}) {
     'billing hello team help helpdesk it webmaster postmaster root abuse security privacy datenschutz buchhaltung').split(' '));
 
   const personByName = new Map();
+  const keptStaff = new Set();
 
   // Register a person: every name part and the full name map to one pseudonym.
   // keep: false for an agent the caller could not confirm as staff.
@@ -166,10 +171,14 @@ function createPseudonymizer(config = {}) {
     const label = role === 'customer' ? 'Customer' : role === 'agent' ? 'Agent' : 'Person';
     // One person with two mail addresses keeps one pseudonym.
     const fullName = (name || `${firstname} ${lastname}`).trim().toLowerCase();
+    // The page's sender line repeats staff the API already confirmed.
+    if (keptStaff.has(key) || (fullName && keptStaff.has(fullName))) return null;
     const pseudonym = (fullName && personByName.get(fullName)) || lazyLookup('person:' + label, key, label);
     if (fullName && !personByName.has(fullName)) personByName.set(fullName, pseudonym);
     const mailOf = derived(pseudonym, v => `${v.toLowerCase()}@example.com`);
     if (role === 'agent' && keepAgents && keep) {
+      keptStaff.add(key);
+      if (fullName) keptStaff.add(fullName);
       // Staff are shown by first name only: "Anna Young", "Young" -> "Anna".
       const full = name || `${firstname} ${lastname}`.trim();
       const words = full.split(/\s+/).filter(Boolean);
@@ -186,6 +195,7 @@ function createPseudonymizer(config = {}) {
         for (const part of last.split(/\s+/)) if (!nameStopwords.has(part.toLowerCase())) addTerm(part, first, cap);
       } else {
         protect(full);
+        for (const w of words) protect(w);
       }
       if (email) assign('email', email.toLowerCase(), mailOf);
       return first || full;
@@ -404,6 +414,8 @@ function createPseudonymizer(config = {}) {
     s = s.replace(/(\b(?:Bearer|Basic|Token)\s+)[A-Za-z0-9._~+/=-]{8,}/g, (m, pre) => pre + hold('[redacted]'));
     s = s.replace(keyRx, (m, pre, q, v) => v ? pre + q + hold('[redacted]') + q : m);
     s = s.replace(bareKeyRx, (m, pre, v) => /^(Bearer|Basic|Token)$/.test(v) ? m : pre + hold('[redacted]'));
+    s = s.replace(proseSecretRx, (m, pre, q) => pre + q + hold('[redacted]') + q);
+    s = s.replace(proseIsRx, (m, pre, q) => pre + q + hold('[redacted]') + q);
 
     // 2. mail addresses (before URLs and hosts, they contain both)
     s = s.replace(/(?<![\w.%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?![\w-])/g, m => hold(email(m)));

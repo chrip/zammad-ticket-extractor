@@ -176,6 +176,23 @@ test('secrets in config.php and JSON are redacted', () => {
   assert.equal(p.text('Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.x'), 'Authorization: Bearer [redacted]');
 });
 
+test('passwords in free text, English and German', () => {
+  const p = setup();
+  assert.equal(p.text('Link: https://cloud.acme-corp.com/s/AbCdEfGh1234\nPasswort: 4rz5wQX8'), 'Link: https://cloud.domain1.example/s/SHARE1\nPasswort: [redacted]');
+  assert.equal(p.text('Password for the share: "x7!Kp2q"'), 'Password for the share: "[redacted]"');
+  assert.equal(p.text('The password is Hunter22. Thanks'), 'The password is [redacted]. Thanks');
+  assert.equal(p.text('Das Kennwort lautet geheim123'), 'Das Kennwort lautet [redacted]');
+  assert.equal(p.text('PIN: 4711'), 'PIN: [redacted]');
+  assert.equal(p.text('Pin it to the top: done'), 'Pin it to the top: done');
+});
+
+test('staff confirmed by the API stay kept when the page repeats them', () => {
+  const p = setup();
+  p.addPerson({ firstname: 'Portal', lastname: 'Bot', email: 'bot@supportco.io', role: 'agent' });
+  p.addPerson({ name: 'Portal Bot', email: 'bot@supportco.io', role: 'agent', keep: false });
+  assert.equal(p.text('Portal Bot wrote'), 'Portal Bot wrote');
+});
+
 test('JSON-lines log: user IDs from fields are replaced on every line', () => {
   const p = setup();
   const log = [
