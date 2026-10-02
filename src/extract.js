@@ -22,34 +22,57 @@ async function extractAndCopy(options = {}) {
     // one per line: product names may contain spaces
     protectedWords: String(options.protectedWords || '').split(/\n/).map(w => w.trim()).filter(Boolean)
   }) : null;
-  const ticketId = (location.hash.match(/ticket\/zoom\/(\d+)/) || [])[1] || '';
+  // Firefox runs a content script's fetch as the extension, so cookie
+  // partitioning can leave out the Zammad session; content.fetch runs as the page.
+  const pageFetch = (typeof content !== 'undefined' && content && typeof content.fetch === 'function')
+    ? content.fetch.bind(content) : fetch;
+  const apiErrors = [];
 
   async function api(path) {
-    const res = await fetch(path, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
-    return res.json();
+    const res = await pageFetch(path, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`${path.split('?')[0]}: HTTP ${res.status}`);
+    // JSON.parse keeps the result in this script's own objects (Firefox Xrays)
+    return JSON.parse(await res.text());
   }
+
+  async function tryApi(path, fallback) {
+    try {
+      return await api(path);
+    } catch (e) {
+      console.warn('[EXTRACT] API call failed:', e);
+      apiErrors.push(e.message || String(e));
+      return fallback;
+    }
+  }
+
+  // The internal ticket ID: from the URL (#ticket/zoom/123, /tickets/123),
+  // else looked up by the ticket number shown on the page.
+  async function resolveTicketId() {
+    const fromUrl = (location.hash.match(/ticket\/zoom\/(\d+)/) || location.pathname.match(/\/tickets?\/(\d+)/) || [])[1];
+    if (fromUrl) return fromUrl;
+    const numberEl = document.querySelector('.ticketZoom .js-objectNumber');
+    const shown = (numberEl && (numberEl.getAttribute('data-number') || numberEl.textContent) || '').replace(/^\D*/, '').trim();
+    if (!shown) {
+      apiErrors.push(`no ticket ID in ${location.pathname}${location.hash}`);
+      return '';
+    }
+    const found = await tryApi(`/api/v1/tickets/search?query=${encodeURIComponent('number:' + shown)}&limit=1`, null);
+    const first = found && (Array.isArray(found) ? found[0] : (found.tickets || [])[0]);
+    return String((first && first.id) || first || '');
+  }
+
+  let ticketId = '';
 
   // Ticket, customer, owner and organization records give names, mails and
   // phones to pseudonymize. Without them only the article senders are known.
   async function loadTicketAssets() {
     if (!ticketId) return null;
-    try {
-      return await api(`/api/v1/tickets/${ticketId}?all=true`);
-    } catch (e) {
-      console.warn('[EXTRACT] Ticket assets unavailable:', e);
-      return null;
-    }
+    return tryApi(`/api/v1/tickets/${ticketId}?all=true`, null);
   }
 
   async function loadArticles() {
     if (!ticketId) return [];
-    try {
-      return await api(`/api/v1/ticket_articles/by_ticket/${ticketId}`);
-    } catch (e) {
-      console.warn('[EXTRACT] Articles unavailable:', e);
-      return [];
-    }
+    return tryApi(`/api/v1/ticket_articles/by_ticket/${ticketId}`, []);
   }
 
   // Our own staff are users whose Zammad role grants agent or admin permissions.
@@ -57,6 +80,7 @@ async function extractAndCopy(options = {}) {
   async function loadStaffRoleIds() {
     try {
       const roles = await api('/api/v1/roles?expand=true');
+      if (!Array.isArray(roles)) throw new Error('/api/v1/roles: unexpected answer');
       const ids = new Set();
       for (const r of roles || []) {
         const perms = Array.isArray(r.permissions) ? r.permissions : [];
@@ -65,6 +89,7 @@ async function extractAndCopy(options = {}) {
       return ids;
     } catch (e) {
       console.warn('[EXTRACT] Roles unavailable, every person gets pseudonymized:', e);
+      apiErrors.push(e.message || String(e));
       return null;
     }
   }
@@ -304,6 +329,7 @@ async function extractAndCopy(options = {}) {
   const number = ticketRoot.querySelector('.js-objectNumber')?.getAttribute('data-number')?.replace(/^Ticket#/, '') ||
     (ticketRoot.querySelector('.js-objectNumber') || {}).textContent?.trim() || '';
 
+  if (anonymize || downloadAttachments) ticketId = await resolveTicketId();
   const [ticketAll, apiArticles] = (anonymize || downloadAttachments)
     ? await Promise.all([anonymize ? loadTicketAssets() : null, loadArticles()])
     : [null, []];
@@ -399,9 +425,12 @@ async function extractAndCopy(options = {}) {
         (message.attachments = message.attachments || []).push(entry);
         try {
           if (Number(att.size) > MAX_BYTES) { entry.status = 'skipped: larger than 40 MB'; stats.skipped++; continue; }
-          const res = await fetch(`/api/v1/ticket_attachment/${ticketId}/${article.id}/${att.id}`, { credentials: 'same-origin' });
+          const res = await pageFetch(`/api/v1/ticket_attachment/${ticketId}/${article.id}/${att.id}`, { credentials: 'same-origin' });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const original = new Uint8Array(await res.arrayBuffer());
+          // copy: a page-side buffer (Firefox content.fetch) stays out of this script's reach
+          const buffer = await res.arrayBuffer();
+          const original = new Uint8Array(buffer.byteLength);
+          original.set(new Uint8Array(buffer));
           let bytes = original;
           let fileExt = ext;
           const contentType = String((att.preferences && (att.preferences['Content-Type'] || att.preferences['Mime-Type'])) || '');
@@ -577,6 +606,7 @@ async function extractAndCopy(options = {}) {
     anonymized: anonymize,
     attachments: attachmentStats,
     ticketAssetsLoaded: Boolean(ticketAll),
+    apiError: apiErrors[0] || '',
     staffKnown
   };
 
