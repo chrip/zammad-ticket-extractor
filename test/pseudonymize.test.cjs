@@ -18,7 +18,42 @@ function setup() {
 test('known people, their mail and phone get consistent pseudonyms', () => {
   const p = setup();
   const out = p.text('Hi Mr. Smith, thanks John! Mail j.smith@acme-corp.com or call +1 415 555 0134. Best, Anna Young');
-  assert.equal(out, 'Hi Mr. Customer-1, thanks Customer-1! Mail customer-1@example.com or call [phone-1]. Best, Anna Young');
+  assert.equal(out, 'Hi Mr. Customer-1, thanks Customer-1! Mail customer-1@example.com or call [phone-1]. Best, Anna');
+});
+
+test('staff are shown by first name only', () => {
+  const p = setup();
+  p.addPerson({ name: 'Jonas Meurer', email: 'jonas.meurer@supportco.io', role: 'agent' });
+  assert.equal(p.text('Anna Young and Jonas Meurer via Supportco, ask Ms. Young or Meurer, Young, Anna'),
+    'Anna and Jonas via Supportco, ask Ms. Anna or Jonas, Anna');
+});
+
+test('mailbox accounts of staff keep their whole name', () => {
+  const p = setup();
+  p.addProtectedName('Supportco GmbH');
+  p.addPerson({ firstname: 'Supportco', lastname: 'Support', email: 'support@supportco.io', role: 'agent' });
+  p.addPerson({ firstname: 'Portal', lastname: 'Bot', email: 'bot@supportco.io', role: 'agent' });
+  assert.equal(p.text('Supportco Support and Portal Bot'), 'Supportco Support and Portal Bot');
+});
+
+test('one person with two mail addresses keeps one pseudonym', () => {
+  const p = createPseudonymizer();
+  p.addPerson({ name: 'John Smith', email: 'j.smith@acme-corp.de', role: 'customer' });
+  p.addPerson({ name: 'John Smith', email: 'j.smith@acme-corp.com', role: 'customer' });
+  assert.equal(p.text('John Smith: j.smith@acme-corp.com, j.smith@acme-corp.de'), 'Customer-1: customer-1@example.com, customer-1@example.com');
+});
+
+test('numbers follow the order of appearance, not of registration', () => {
+  const p = createPseudonymizer();
+  for (const n of ['Ann Ames', 'Ben Bell', 'Cid Cole']) p.addPerson({ name: n, email: `${n.split(' ')[0].toLowerCase()}@acme-corp.com`, role: 'customer' });
+  assert.equal(p.text('Cid Cole wrote to ben@acme-corp.com'), 'Customer-1 wrote to customer-2@example.com');
+  assert.equal(p.text('Ann Ames and Cid'), 'Customer-3 and Customer-1');
+});
+
+test('URLs keep balanced parentheses, a wrapping one stays outside', () => {
+  const p = setup();
+  assert.equal(p.text('LTS ([internal] https://cloud.supportco.io/Support/Long%20term%20support%20(LTS)?fileId=7081382)'),
+    'LTS ([internal] [internal-link-1])');
 });
 
 test('support agents stay readable by name, their mails are pseudonymized', () => {

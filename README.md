@@ -30,13 +30,14 @@ A lightweight browser extension for Firefox and Chrome that extracts entire supp
 With "Pseudonymize" on, the export keeps the conversation readable but replaces
 what identifies the customer side. The same value gets the same pseudonym
 everywhere in one export, in the conversation and in every attachment, so an
-AI can still follow who said what and which host a log line is about. Nothing
-is stored: the mapping exists only while one export runs.
+AI can still follow who said what and which host a log line is about. Numbers follow
+the order of first appearance in the export. Nothing is stored: the mapping
+exists only while one export runs.
 
 | What | Becomes |
 | --- | --- |
 | Customers and other people (ticket users, From/To/Cc, sender names) | `Customer-1`, `Person-1` |
-| Support agents, only with "Keep support agent names" off or when Zammad roles are not readable | `Agent-1` |
+| Support agents, only with "Keep support agent first names" off or when Zammad roles are not readable | `Agent-1` |
 | Names after a salutation ("Hi Tom", "Dear Mr. Weber", "Thanks, Anna") | `Person-N` |
 | Organizations, with and without legal form | `Org-1` |
 | Mail addresses, always, the support team's own included | `customer-1@example.com`, `agent-1@example.com`, `user-N@example.com` |
@@ -47,7 +48,7 @@ is stored: the mapping exists only while one export runs.
 | User IDs in JSON logs, WebDAV and data directory paths | `user-N` |
 | Passwords, secrets, tokens, salts, `instanceid` in config dumps and logs | `[redacted]` |
 
-Kept as is: support agents' names (switch off with "Keep support agent names"), the support company's name and the protected
+Kept as is: support agents' first names, their surnames are dropped (switch off with "Keep support agent first names"), the support company's name and the protected
 words, loopback addresses, version numbers, URLs on public hosts, and the
 ticket number. The page URL is left out.
 

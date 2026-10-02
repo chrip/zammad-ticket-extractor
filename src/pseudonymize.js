@@ -63,7 +63,7 @@ function createPseudonymizer(config = {}) {
   // Placeholders survive later passes untouched: no letters, digits or dots in them.
   const sentinels = [];
   const hold = value => `\uE000${sentinels.push(value) - 1}\uE001`;
-  const release = text => text.replace(/\uE000(\d+)\uE001/g, (m, i) => sentinels[Number(i)]);
+  const release = text => text.replace(/\uE000(\d+)\uE001/g, (m, i) => String(sentinels[Number(i)]));
 
   function next(kind) {
     const n = (counters.get(kind) || 0) + 1;
@@ -75,6 +75,24 @@ function createPseudonymizer(config = {}) {
     if (!maps.has(kind)) maps.set(kind, new Map());
     const map = maps.get(kind);
     if (!map.has(key)) map.set(key, make(next(kind)));
+    return map.get(key);
+  }
+
+  // A pseudonym whose number is assigned when it is first written out, so
+  // "Customer-1" is the first one in the export, not the first one registered.
+  function ref(label) {
+    let value = null;
+    return { toString: () => value || (value = `${label}-${next('ref:' + label)}`) };
+  }
+
+  function derived(base, format) {
+    return { toString: () => format(String(base)) };
+  }
+
+  function lazyLookup(kind, key, label) {
+    if (!maps.has(kind)) maps.set(kind, new Map());
+    const map = maps.get(kind);
+    if (!map.has(key)) map.set(key, ref(label));
     return map.get(key);
   }
 
@@ -132,10 +150,13 @@ function createPseudonymizer(config = {}) {
 
   const nameStopwords = new Set(('herr frau dr prof ing dipl mr mrs ms miss sir madam van von der den de la le ' +
     'du di da del team support admin administrator agent customer system info service kunde kundin gmbh ag ' +
-    'kg ug ohg mbh ev e.v inc ltd llc corp co sa sarl bv nv the und and').split(' '));
+    'kg ug ohg mbh ev e.v inc ltd llc corp co sa sarl bv nv the und and bot robot noreply notification notifications ' +
+    'automation helpdesk desk office').split(' '));
 
   const genericMailboxes = new Set(('info support admin contact kontakt office mail noreply no-reply service sales ' +
     'billing hello team help helpdesk it webmaster postmaster root abuse security privacy datenschutz buchhaltung').split(' '));
+
+  const personByName = new Map();
 
   // Register a person: every name part and the full name map to one pseudonym.
   // keep: false for an agent the caller could not confirm as staff.
@@ -143,12 +164,31 @@ function createPseudonymizer(config = {}) {
     const key = (email || `${firstname} ${lastname}`.trim() || name || login).toLowerCase();
     if (!key) return null;
     const label = role === 'customer' ? 'Customer' : role === 'agent' ? 'Agent' : 'Person';
-    const pseudonym = lookup('person:' + label, key, n => `${label}-${n}`);
+    // One person with two mail addresses keeps one pseudonym.
+    const fullName = (name || `${firstname} ${lastname}`).trim().toLowerCase();
+    const pseudonym = (fullName && personByName.get(fullName)) || lazyLookup('person:' + label, key, label);
+    if (fullName && !personByName.has(fullName)) personByName.set(fullName, pseudonym);
+    const mailOf = derived(pseudonym, v => `${v.toLowerCase()}@example.com`);
     if (role === 'agent' && keepAgents && keep) {
+      // Staff are shown by first name only: "Anna Young", "Young" -> "Anna".
       const full = name || `${firstname} ${lastname}`.trim();
-      for (const part of [full, firstname, lastname, ...full.split(/[\s,]+/)]) protect(part);
-      if (email) assign('email', email.toLowerCase(), `${pseudonym.toLowerCase()}@example.com`);
-      return full || pseudonym;
+      const words = full.split(/\s+/).filter(Boolean);
+      const first = firstname || (words.length > 1 ? words[0] : '');
+      const last = lastname || (words.length > 1 ? words.slice(1).join(' ') : '');
+      // "Acme Support" or "Portal Bot" is a mailbox: keep it whole.
+      const surname = last && last.split(/\s+/).every(w => !nameStopwords.has(w.toLowerCase()) && !protectedWords.has(w.toLowerCase()));
+      if (first && last && surname) {
+        protect(first);
+        const cap = { capitalized: true };
+        addTerm(full, first, cap);
+        addTerm(`${last}, ${first}`, first, cap);
+        addTerm(last, first, cap);
+        for (const part of last.split(/\s+/)) if (!nameStopwords.has(part.toLowerCase())) addTerm(part, first, cap);
+      } else {
+        protect(full);
+      }
+      if (email) assign('email', email.toLowerCase(), mailOf);
+      return first || full;
     }
     const full = name || `${firstname} ${lastname}`.trim();
     const cap = { capitalized: true };
@@ -162,14 +202,14 @@ function createPseudonymizer(config = {}) {
       if (part && !nameStopwords.has(part.toLowerCase().replace(/\.$/, ''))) addTerm(part, pseudonym, cap);
     }
     if (email) {
-      assign('email', email.toLowerCase(), `${pseudonym.toLowerCase()}@example.com`);
+      assign('email', email.toLowerCase(), mailOf);
       // "c.schaefer" identifies a person, "info" or "support" does not.
       const local = email.split('@')[0];
-      if (/[a-z]/i.test(local) && local.length >= 4 && !genericMailboxes.has(local.toLowerCase())) addTerm(local, pseudonym.toLowerCase());
+      if (/[a-z]/i.test(local) && local.length >= 4 && !genericMailboxes.has(local.toLowerCase())) addTerm(local, derived(pseudonym, v => v.toLowerCase()));
     }
-    if (login && login !== email) addTerm(login, pseudonym.toLowerCase());
+    if (login && login !== email) addTerm(login, derived(pseudonym, v => v.toLowerCase()));
     for (const p of phones) addPhone(p);
-    for (const e of extra) addTerm(e, `[address of ${pseudonym}]`);
+    for (const e of extra) addTerm(e, derived(pseudonym, v => `[address of ${v}]`));
     return pseudonym;
   }
 
@@ -197,7 +237,7 @@ function createPseudonymizer(config = {}) {
 
   function addOrganization(name, domains = []) {
     if (!name) return null;
-    const pseudonym = lookup('org', name.toLowerCase(), n => `Org-${n}`);
+    const pseudonym = lazyLookup('org', name.toLowerCase(), 'Org');
     // "Acme Corp Inc." is also written as "Acme Corp" or plain "Acme".
     for (const core of nameCores(name)) addTerm(core, pseudonym, { capitalized: true });
     for (const d of domains) host(d);
@@ -210,7 +250,7 @@ function createPseudonymizer(config = {}) {
     if (/^(--|admin|root|null|undefined|system|cron|anonymous|guest|-)$/i.test(id)) return null;
     const existing = terms.get(id.toLowerCase());
     if (existing) return existing.pseudonym;
-    const pseudonym = lookup('userid', id.toLowerCase(), n => `user-${n}`);
+    const pseudonym = lazyLookup('userid', id.toLowerCase(), 'user');
     addTerm(id, pseudonym);
     return pseudonym;
   }
@@ -369,7 +409,8 @@ function createPseudonymizer(config = {}) {
     s = s.replace(/(?<![\w.%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?![\w-])/g, m => hold(email(m)));
 
     // 3. URLs with scheme
-    s = s.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`)\]}]+/gi, m => {
+    // balanced parentheses belong to the URL: ".../Support%20(LTS)?fileId=1"
+    s = s.replace(/\b[a-z][a-z0-9+.-]*:\/\/(?:[^\s<>"'`()\[\]{}]|\([^\s<>"'`()]*\))+/gi, m => {
       const trail = m.match(/[.,;:!?]+$/)?.[0] || '';
       return hold(url(m.slice(0, m.length - trail.length))) + trail;
     });
@@ -441,7 +482,7 @@ function createPseudonymizer(config = {}) {
       const parts = name.split(/[ \t]+/);
       if (salutationStop.has(parts[0]) || parts.every(w => protectedWords.has(w.toLowerCase()))) continue;
       const known = terms.get(name.toLowerCase());
-      const pseudonym = known ? known.pseudonym : lookup('person:Person', name.toLowerCase(), n => `Person-${n}`);
+      const pseudonym = known ? known.pseudonym : lazyLookup('person:Person', name.toLowerCase(), 'Person');
       for (const part of parts) if (!salutationStop.has(part)) addTerm(part, pseudonym, { capitalized: true });
       addTerm(name, pseudonym, { capitalized: true });
     }
