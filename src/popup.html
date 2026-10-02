@@ -79,6 +79,18 @@
       cursor: pointer;
     }
 
+    .anonymize-toggle.sub {
+      margin-top: -8px;
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+      padding-left: 28px;
+    }
+
+    .anonymize-toggle.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .button-row {
       display: flex;
       flex-direction: column;
@@ -107,27 +119,86 @@
     #status.hidden {
       display: none;
     }
+
+    details {
+      font-size: 12px;
+    }
+
+    details summary {
+      cursor: pointer;
+      color: #555;
+    }
+
+    details label {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-top: 8px;
+    }
+
+    details textarea {
+      font: 12px ui-monospace, monospace;
+      min-height: 64px;
+      resize: vertical;
+      box-sizing: border-box;
+      width: 100%;
+    }
+
+    details .hint {
+      color: #666;
+    }
   </style>
 </head>
 
 <body>
   <label class="settings" for="copyFormat">
-    <span>Copy format</span>
+    <span>Format (clipboard and download)</span>
     <select id="copyFormat">
       <option value="json">JSON</option>
-      <option value="text">Plain text</option>
+      <option value="text">Plain text (better for AI chats)</option>
     </select>
   </label>
   <label class="anonymize-toggle" for="anonymizeToggle">
     <input type="checkbox" id="anonymizeToggle">
-    <span>Anonymize (remove emails)</span>
+    <span>Pseudonymize (names, mails, hosts, IPs, secrets)</span>
+  </label>
+  <label class="anonymize-toggle sub" for="keepAgentsToggle" id="keepAgentsLabel">
+    <input type="checkbox" id="keepAgentsToggle">
+    <span>Keep support agent names</span>
+  </label>
+  <label class="anonymize-toggle" for="attachmentsToggle">
+    <input type="checkbox" id="attachmentsToggle">
+    <span>Download attachments (text logs, with the JSON)</span>
+  </label>
+  <label class="anonymize-toggle sub" for="binaryToggle" id="binaryLabel">
+    <input type="checkbox" id="binaryToggle">
+    <span>Also archives, images, PDFs (unchanged)</span>
   </label>
   <div class="button-row">
     <button id="copyBtn" class="primary">Copy to Clipboard</button>
     <button id="downloadJsonBtn">Download JSON</button>
   </div>
   <div id="status"></div>
+  <details id="advanced">
+    <summary>Advanced</summary>
+    <label for="publicHosts">
+      <span>Public hosts, URLs kept as they are</span>
+      <textarea id="publicHosts" spellcheck="false"></textarea>
+      <span class="hint">One per line; *.example.org also matches subdomains.</span>
+    </label>
+    <label for="internalDomains">
+      <span>Internal domains, links become [internal-link-N]</span>
+      <textarea id="internalDomains" spellcheck="false"></textarea>
+      <span class="hint">Agents' mail domains count as internal too.</span>
+    </label>
+    <label for="protectedWords">
+      <span>Protected words, never pseudonymized</span>
+      <textarea id="protectedWords" spellcheck="false"></textarea>
+      <span class="hint">Your company and product names, one per line. The agents' organization is added automatically.</span>
+    </label>
+  </details>
   <script src="browser-shim.js"></script>
+  <script src="pseudonymize.js"></script>
   <script src="popup.js"></script>
 </body>
 

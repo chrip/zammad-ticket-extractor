@@ -1,25 +1,112 @@
 // Shared by the Firefox background script and the Chrome service worker.
 // extractAndCopy runs inside the Zammad page: Firefox injects its source text,
 // Chrome passes the function itself to chrome.scripting.executeScript.
+// Both inject pseudonymize.js first, so createPseudonymizer is defined here.
 
 // Function executed in the page context
 async function extractAndCopy(options = {}) {
   const copyFormat = (options.copyFormat === 'text' ? 'text' : 'json');
   const anonymize = Boolean(options.anonymize);
   const downloadJson = Boolean(options.downloadJson);
+  // Attachments are saved next to the JSON, so only on download.
+  const downloadAttachments = downloadJson && Boolean(options.downloadAttachments);
+  const includeBinary = Boolean(options.includeBinary);
 
-  console.log('[EXTRACT] Starting extraction with options:', { copyFormat, anonymize, downloadJson });
+  console.log('[EXTRACT] Starting extraction with options:', { copyFormat, anonymize, downloadJson, downloadAttachments, includeBinary });
 
-  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const hostList = value => Array.isArray(value) ? value : String(value || '').split(/[\s,]+/).filter(Boolean);
+  const pseudo = anonymize ? createPseudonymizer({
+    keepAgents: options.keepAgents !== false,
+    publicHosts: options.publicHosts ? hostList(options.publicHosts) : undefined,
+    internalDomains: hostList(options.internalDomains),
+    // one per line: product names may contain spaces
+    protectedWords: String(options.protectedWords || '').split(/\n/).map(w => w.trim()).filter(Boolean)
+  }) : null;
+  const ticketId = (location.hash.match(/ticket\/zoom\/(\d+)/) || [])[1] || '';
 
-  function stripEmails(value) {
-    if (!value || typeof value !== 'string') return value;
-    return value
-      .replace(emailRegex, '')
-      .replace(/[ \t]{2,}/g, ' ')
-      .replace(/\n[ \t]+/g, '\n')
-      .replace(/[ \t]+\n/g, '\n')
-      .trim();
+  async function api(path) {
+    const res = await fetch(path, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // Ticket, customer, owner and organization records give names, mails and
+  // phones to pseudonymize. Without them only the article senders are known.
+  async function loadTicketAssets() {
+    if (!ticketId) return null;
+    try {
+      return await api(`/api/v1/tickets/${ticketId}?all=true`);
+    } catch (e) {
+      console.warn('[EXTRACT] Ticket assets unavailable:', e);
+      return null;
+    }
+  }
+
+  async function loadArticles() {
+    if (!ticketId) return [];
+    try {
+      return await api(`/api/v1/ticket_articles/by_ticket/${ticketId}`);
+    } catch (e) {
+      console.warn('[EXTRACT] Articles unavailable:', e);
+      return [];
+    }
+  }
+
+  function registerPeople(all, articles) {
+    const assets = (all && all.assets) || {};
+    const ticket = (assets.Ticket || {})[all && all.ticket_id] || {};
+    const users = assets.User || {};
+    const orgs = assets.Organization || {};
+    const customerOrg = ticket.organization_id;
+    const agentIds = new Set([ticket.owner_id]);
+    for (const a of articles) if (a.sender === 'Agent' && a.created_by_id) agentIds.add(a.created_by_id);
+    const domainOf = mail => String(mail || '').toLowerCase().split('@')[1] || '';
+    // The agents' mail domains are the support team's own: their URLs are internal.
+    for (const u of Object.values(users)) {
+      if (u && agentIds.has(u.id) && u.id !== ticket.customer_id) pseudo.addInternalDomain(domainOf(u.email));
+    }
+    const isCustomerUser = u => u.id === ticket.customer_id || (customerOrg && u.organization_id === customerOrg);
+    const isAgentUser = u => !isCustomerUser(u) && (agentIds.has(u.id) || pseudo.isInternal(domainOf(u.email)));
+
+    // Agents first, so their names are protected before customers are added;
+    // then the ticket's customer, so that is Customer-1.
+    const rank = u => isAgentUser(u) ? 0 : u.id === ticket.customer_id ? 1 : 2;
+    const ordered = Object.values(users).filter(Boolean).sort((a, b) => rank(a) - rank(b));
+    const customerOrgIds = new Set([customerOrg]);
+    for (const u of ordered) {
+      if (u.id === 1) continue; // id 1 is Zammad's system user
+      const role = isCustomerUser(u) ? 'customer' : isAgentUser(u) ? 'agent' : 'person';
+      if (role !== 'agent' && u.organization_id) customerOrgIds.add(u.organization_id);
+      const address = [u.street, u.address, [u.zip, u.city].filter(Boolean).join(' ')].filter(v => v && String(v).trim());
+      pseudo.addPerson({
+        firstname: u.firstname || '', lastname: u.lastname || '', email: u.email || '', login: u.login || '',
+        phones: [u.phone, u.mobile, u.fax].filter(Boolean), extra: address, role
+      });
+      if (u.web) pseudo.text(u.web);
+    }
+    // Only the customer side's organizations; the support company stays readable
+    // and its name is never taken for a person ("<Company> Support" senders).
+    for (const u of Object.values(users)) {
+      const org = u && isAgentUser(u) && orgs[u.organization_id];
+      if (org && org.name && !customerOrgIds.has(org.id)) pseudo.addProtectedName(org.name);
+    }
+    for (const o of Object.values(orgs)) {
+      if (o && o.name && customerOrgIds.has(o.id)) pseudo.addOrganization(o.name, String(o.domain || '').split(/[\s,;]+/).filter(Boolean));
+    }
+    // Article headers name people who are no Zammad user: "Name <mail>" in From/To/Cc.
+    for (const a of articles) {
+      for (const field of [a.from, a.to, a.cc, a.reply_to]) {
+        if (!field) continue;
+        for (const part of String(field).split(/,(?![^<]*>)/)) {
+          const mail = (part.match(/<([^>]+)>/) || part.match(/([^\s<>"]+@[^\s<>"]+)/) || [])[1] || '';
+          const name = part.replace(/<[^>]*>/g, '').replace(/["']/g, '').trim();
+          if (!mail && !name) continue;
+          const role = pseudo.isInternal(domainOf(mail)) || (a.sender === 'Agent' && field === a.from) ? 'agent'
+            : a.sender === 'Customer' && field === a.from ? 'customer' : 'person';
+          pseudo.addPerson({ name: name.includes('@') ? '' : name, email: mail.trim(), role });
+        }
+      }
+    }
   }
 
   function textFromNode(node) {
@@ -68,7 +155,8 @@ async function extractAndCopy(options = {}) {
     clone.querySelectorAll('a[href]').forEach(a => {
       const url = a.getAttribute('href');
       const text = a.textContent.trim();
-      const rep = document.createTextNode(text ? `${text} (${url})` : url);
+      const same = text === url || `mailto:${text}` === url || `tel:${text}` === url;
+      const rep = document.createTextNode(text && !same ? `${text} (${url})` : (same ? text : url));
       a.replaceWith(rep);
     });
 
@@ -193,7 +281,11 @@ async function extractAndCopy(options = {}) {
   const rawTitle = (ticketRoot.querySelector('.js-objectTitle') || {}).textContent?.trim() || '';
   const number = ticketRoot.querySelector('.js-objectNumber')?.getAttribute('data-number')?.replace(/^Ticket#/, '') ||
     (ticketRoot.querySelector('.js-objectNumber') || {}).textContent?.trim() || '';
-  const title = anonymize ? stripEmails(rawTitle) : rawTitle;
+
+  const [ticketAll, apiArticles] = (anonymize || downloadAttachments)
+    ? await Promise.all([anonymize ? loadTicketAssets() : null, loadArticles()])
+    : [null, []];
+  if (pseudo) registerPeople(ticketAll, apiArticles);
 
   function getArticleDate(article) {
     const linkTime = article.parentElement?.querySelector('a small .humanTimeFromNow[datetime]') ||
@@ -216,6 +308,109 @@ async function extractAndCopy(options = {}) {
     const avatar = article.querySelector('.js-avatar [title]');
     const name = avatar?.getAttribute('title')?.trim() || (article.classList.contains('agent') ? 'Agent' : 'Customer');
     return { name, email: '' };
+  }
+
+  // ---- attachments ------------------------------------------------------
+  const MAX_BYTES = 40 * 1024 * 1024; // Chrome caps extension messages at 64 MiB, base64 adds a third
+  const textExtensions = new Set(('log txt text json jsonl ndjson csv tsv xml yml yaml conf cfg ini env php md ' +
+    'html htm sh out err journal properties toml sql diff patch').split(' '));
+  const runtime = (globalThis.browser || globalThis.chrome).runtime;
+
+  function splitName(filename) {
+    const name = String(filename || '').toLowerCase();
+    const gz = /\.gz$/.test(name);
+    const inner = gz ? name.slice(0, -3) : name;
+    const m = inner.match(/\.([a-z0-9]{1,10})$/);
+    return { gz, ext: m ? m[1] : '' };
+  }
+
+  function looksLikeText(bytes) {
+    const sample = bytes.subarray(0, 8192);
+    if (sample.includes(0)) return false;
+    try { new TextDecoder('utf-8', { fatal: true }).decode(sample.subarray(0, Math.max(0, sample.length - 4))); return true; } catch { return false; }
+  }
+
+  async function gunzip(bytes) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const chunks = [];
+    let size = 0;
+    const reader = stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > MAX_BYTES) { reader.cancel(); throw new Error('too large unpacked'); }
+      chunks.push(value);
+    }
+    return new Uint8Array(await new Blob(chunks).arrayBuffer());
+  }
+
+  function toBase64(bytes) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+
+  function safeName(name) {
+    return String(name || 'file').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '_').slice(0, 120);
+  }
+
+  async function saveFile(path, payload) {
+    const res = await runtime.sendMessage({ type: 'SAVE_FILE', filename: `${folder}/${path}`, ...payload });
+    if (!res || !res.ok) throw new Error((res && res.error) || 'download failed');
+  }
+
+  async function saveAttachments() {
+    const stats = { saved: 0, skipped: 0, failed: 0 };
+    const byArticle = new Map(messages.map((m, i) => [String(m.articleId), i]));
+    let counter = 0;
+    for (const article of apiArticles) {
+      const idx = byArticle.get(String(article.id));
+      if (idx === undefined) continue; // not shown, e.g. filtered by Zammad
+      const message = messages[idx];
+      for (const att of article.attachments || []) {
+        counter++;
+        const { gz, ext } = splitName(att.filename);
+        const label = `a${String(idx + 1).padStart(2, '0')}-${counter}`;
+        const entry = anonymize ? { type: ext || 'bin', size: att.size } : { name: att.filename, size: att.size };
+        (message.attachments = message.attachments || []).push(entry);
+        try {
+          if (Number(att.size) > MAX_BYTES) { entry.status = 'skipped: larger than 40 MB'; stats.skipped++; continue; }
+          const res = await fetch(`/api/v1/ticket_attachment/${ticketId}/${article.id}/${att.id}`, { credentials: 'same-origin' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const original = new Uint8Array(await res.arrayBuffer());
+          let bytes = original;
+          let fileExt = ext;
+          const contentType = String((att.preferences && (att.preferences['Content-Type'] || att.preferences['Mime-Type'])) || '');
+          if (gz) {
+            try { bytes = await gunzip(bytes); } catch (e) { bytes = null; entry.note = `not unpacked: ${e.message}`; }
+          }
+          const isText = bytes && (textExtensions.has(ext) || /^text\/|json|xml|yaml/.test(contentType) || (!ext && looksLikeText(bytes))) && looksLikeText(bytes);
+          if (isText) {
+            const content = new TextDecoder('utf-8').decode(bytes);
+            const out = pseudo ? pseudo.file(content) : content;
+            fileExt = ext || 'txt';
+            entry.file = anonymize ? `${label}.${fileExt}` : safeName(gz ? att.filename.replace(/\.gz$/i, '') : att.filename);
+            await saveFile(entry.file, { text: out, mime: 'text/plain;charset=utf-8' });
+            entry.status = anonymize ? 'saved, pseudonymized' : 'saved';
+            stats.saved++;
+          } else if (includeBinary) {
+            entry.file = anonymize ? `${label}.${(gz ? ext + '.gz' : ext) || 'bin'}` : safeName(att.filename);
+            await saveFile(entry.file, { base64: toBase64(original), mime: contentType || 'application/octet-stream' });
+            entry.status = anonymize ? 'saved unchanged, NOT pseudonymized' : 'saved';
+            stats.saved++;
+          } else {
+            entry.status = 'skipped: binary or archive';
+            stats.skipped++;
+          }
+        } catch (e) {
+          console.error('[EXTRACT] Attachment failed:', e);
+          entry.status = `failed: ${e.message}`;
+          stats.failed++;
+        }
+      }
+    }
+    return stats;
   }
 
   // Extract ALL articles from the page
@@ -251,6 +446,7 @@ async function extractAndCopy(options = {}) {
     const dateIso = getArticleDate(article);
 
     const message = {
+      articleId: article.getAttribute('data-id') || '',
       authorName: isSystem ? 'System' : (name || ''),
       authorEmail: isSystem ? '' : (email || ''),
       role,
@@ -264,20 +460,39 @@ async function extractAndCopy(options = {}) {
 
   console.log('[EXTRACT] Extracted', messages.length, 'messages');
 
-  if (anonymize) {
-    messages.forEach(message => {
-      delete message.authorName;
-      delete message.authorEmail;
-      message.contentText = stripEmails(message.contentText);
+  let title = rawTitle;
+  if (pseudo) {
+    // DOM senders cover tickets the API did not return.
+    for (const role of ['agent', 'customer']) {
+      messages.forEach(m => { if (m.role === role) pseudo.addPerson({ name: m.authorName, email: m.authorEmail, role }); });
+    }
+    // Names known only from a salutation in a later message count everywhere.
+    pseudo.learn(rawTitle);
+    messages.forEach(m => pseudo.learn(m.contentText));
+    title = pseudo.text(rawTitle);
+    messages.forEach(m => {
+      if (m.role !== 'system') {
+        m.authorName = pseudo.text(m.authorName || '');
+        m.authorEmail = pseudo.text(m.authorEmail || '');
+      }
+      m.contentText = pseudo.text(m.contentText);
     });
   }
+
+  const now = new Date();
+  const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+  const folder = `zammad/ticket-${number || 'unknown'}-${ts}`;
+  const ext = copyFormat === 'text' ? 'txt' : 'json';
+  const filename = downloadAttachments ? `${folder}/ticket.${ext}` : `ticket-${number || 'unknown'}-${ts}.${ext}`;
+
+  const attachmentStats = downloadAttachments ? await saveAttachments() : null;
 
   const transcript = messages.map(m => {
     const d = m.date ? new Date(m.date) : null;
     const local = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
     const vis = m.visibility === 'internal' ? 'internal' : 'public';
-    const mailLine = anonymize ? '[redacted]' : (m.authorName || '');
-    return `mail: ${mailLine}\nrole: ${m.role} (${vis})\ndate: ${local}\ncontent:\n${m.contentText}`;
+    const files = (m.attachments || []).map(a => `attachment: ${a.file || a.name || `.${a.type} file`} (${a.status})`).join('\n');
+    return `mail: ${m.authorName || ''}\nrole: ${m.role} (${vis})\ndate: ${local}\n${files ? files + '\n' : ''}content:\n${m.contentText}`;
   }).join('\n\n');
 
   // Copy to clipboard using execCommand (works in content script context)
@@ -300,10 +515,6 @@ async function extractAndCopy(options = {}) {
     }
   }
 
-  const now = new Date();
-  const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-  const filename = `ticket-${number || 'unknown'}-${ts}.json`;
-
   const jsonMessages = messages.map(m => {
     const normalizedContent = (m.contentText || '').replace(/\n/g, ' ').replace(/\s{2,}/g, ' ').trim();
     const entry = {
@@ -312,17 +523,16 @@ async function extractAndCopy(options = {}) {
       date: m.date,
       contentText: normalizedContent
     };
-    if (!anonymize) {
-      entry.authorName = m.authorName;
-      if (m.authorEmail) entry.authorEmail = m.authorEmail;
-    }
+    entry.authorName = m.authorName;
+    if (m.authorEmail) entry.authorEmail = m.authorEmail;
+    if (m.attachments && m.attachments.length) entry.attachments = m.attachments;
     return entry;
   });
 
   const jsonPayload = {
     ticketNumber: number || '',
     ticketTitle: title || '',
-    url: location.href,
+    ...(anonymize ? { pseudonymized: true } : { url: location.href }),
     exportedAt: new Date().toISOString(),
     messages: jsonMessages
   };
@@ -336,11 +546,13 @@ async function extractAndCopy(options = {}) {
   const result = {
     ok: true,
     transcript,
-    json: (copyFormat === 'json' || downloadJson) ? jsonPayload : undefined,
+    json: copyFormat === 'json' ? jsonPayload : undefined,
     filename,
     copied: copied,
     copiedFormat: copyFormat,
-    anonymized: anonymize
+    anonymized: anonymize,
+    attachments: attachmentStats,
+    ticketAssetsLoaded: Boolean(ticketAll)
   };
 
   console.log('[EXTRACT] Returning result:', {

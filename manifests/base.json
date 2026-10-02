@@ -1,6 +1,6 @@
 {
   "name": "Zammad Ticket Extractor",
-  "version": "1.0.4",
+  "version": "2.0.0",
   "description": "Extract and export Zammad ticket conversations to clipboard or JSON for AI analysis and data processing.",
   "permissions": [
     "activeTab",

@@ -15,7 +15,14 @@ function setStatus(msg, isError = false) {
 
 const DEFAULT_SETTINGS = {
   copyFormat: 'json',
-  anonymize: false
+  anonymize: false,
+  downloadAttachments: false,
+  includeBinary: false,
+  keepAgents: true,
+  // one host per line, edited in "Advanced"; defaults from pseudonymize.js
+  publicHosts: DEFAULT_PUBLIC_HOSTS.join('\n'),
+  internalDomains: '',
+  protectedWords: ''
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -75,8 +82,19 @@ async function runExtraction({ downloadJson }) {
     }
     const format = currentSettings.copyFormat === 'json' ? 'JSON' : 'text';
     const parts = [copied ? `Copied ${format} to clipboard.` : 'Failed to copy to clipboard.'];
-    if (downloadJson) parts.push(res.downloadedJson ? 'JSON downloaded.' : 'JSON download failed.');
-    const failed = !copied || (downloadJson && !res.downloadedJson);
+    const label = format === 'JSON' ? 'JSON' : 'Text';
+    if (downloadJson) parts.push(res.downloadedJson ? `${label} downloaded.` : `${label} download failed.`);
+    const att = res.attachments;
+    if (att) {
+      const counts = [`${att.saved} saved`];
+      if (att.skipped) counts.push(`${att.skipped} skipped`);
+      if (att.failed) counts.push(`${att.failed} failed`);
+      parts.push(`Attachments: ${counts.join(', ')}.`);
+    }
+    if (currentSettings.anonymize && !res.ticketAssetsLoaded) {
+      parts.push('Ticket users not readable via API, only senders were pseudonymized by name.');
+    }
+    const failed = !copied || (downloadJson && !res.downloadedJson) || Boolean(att && att.failed);
     setStatus(parts.join(' '), failed);
     return !failed;
   } catch (e) {
@@ -91,6 +109,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const downloadJsonBtn = document.getElementById('downloadJsonBtn');
   const copyFormatSelect = document.getElementById('copyFormat');
   const anonymizeToggle = document.getElementById('anonymizeToggle');
+  const attachmentsToggle = document.getElementById('attachmentsToggle');
+  const binaryToggle = document.getElementById('binaryToggle');
+  const binaryLabel = document.getElementById('binaryLabel');
+  const keepAgentsToggle = document.getElementById('keepAgentsToggle');
+  const keepAgentsLabel = document.getElementById('keepAgentsLabel');
+  const publicHostsInput = document.getElementById('publicHosts');
+  const internalDomainsInput = document.getElementById('internalDomains');
 
   setStatus('');
 
@@ -100,6 +125,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     copyFormatSelect.value = currentSettings.copyFormat;
     copyFormatSelect.addEventListener('change', async (event) => {
       currentSettings.copyFormat = event.target.value;
+      syncControls();
       await saveSettings();
     });
   }
@@ -108,9 +134,48 @@ document.addEventListener('DOMContentLoaded', async () => {
     anonymizeToggle.checked = Boolean(currentSettings.anonymize);
     anonymizeToggle.addEventListener('change', async (event) => {
       currentSettings.anonymize = event.target.checked;
+      syncControls();
       await saveSettings();
     });
   }
+
+  keepAgentsToggle.checked = currentSettings.keepAgents !== false;
+  keepAgentsToggle.addEventListener('change', async (event) => {
+    currentSettings.keepAgents = event.target.checked;
+    await saveSettings();
+  });
+
+  const protectedWordsInput = document.getElementById('protectedWords');
+  for (const [input, key] of [[publicHostsInput, 'publicHosts'], [internalDomainsInput, 'internalDomains'], [protectedWordsInput, 'protectedWords']]) {
+    input.value = currentSettings[key];
+    input.addEventListener('input', async () => {
+      currentSettings[key] = input.value;
+      await saveSettings();
+    });
+  }
+
+  function syncControls() {
+    const on = Boolean(currentSettings.downloadAttachments);
+    binaryToggle.disabled = !on;
+    binaryLabel.classList.toggle('disabled', !on);
+    keepAgentsToggle.disabled = !currentSettings.anonymize;
+    keepAgentsLabel.classList.toggle('disabled', !currentSettings.anonymize);
+    const format = currentSettings.copyFormat === 'text' ? 'text' : 'JSON';
+    downloadJsonBtn.textContent = `Download ${format}${on ? ' + attachments' : ''}`;
+  }
+
+  attachmentsToggle.checked = Boolean(currentSettings.downloadAttachments);
+  binaryToggle.checked = Boolean(currentSettings.includeBinary);
+  syncControls();
+  attachmentsToggle.addEventListener('change', async (event) => {
+    currentSettings.downloadAttachments = event.target.checked;
+    syncControls();
+    await saveSettings();
+  });
+  binaryToggle.addEventListener('change', async (event) => {
+    currentSettings.includeBinary = event.target.checked;
+    await saveSettings();
+  });
 
   let isRunning = false;
 

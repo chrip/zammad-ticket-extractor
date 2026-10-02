@@ -4,7 +4,13 @@ async function runOnActiveTab(options = {}) {
   const runtimeOptions = {
     copyFormat: options.copyFormat || 'json',
     anonymize: Boolean(options.anonymize),
-    downloadJson: Boolean(options.downloadJson)
+    downloadJson: Boolean(options.downloadJson),
+    downloadAttachments: Boolean(options.downloadAttachments),
+    includeBinary: Boolean(options.includeBinary),
+    keepAgents: options.keepAgents !== false,
+    publicHosts: options.publicHosts || '',
+    internalDomains: options.internalDomains || '',
+    protectedWords: options.protectedWords || ''
   };
 
   console.log('[BG] Starting extraction with options:', runtimeOptions);
@@ -17,6 +23,8 @@ async function runOnActiveTab(options = {}) {
   console.log('[BG] Tab found:', tab.id, tab.url);
 
   try {
+    // extractAndCopy calls createPseudonymizer, defined by this file.
+    await browser.tabs.executeScript(tab.id, { file: '/pseudonymize.js' });
     console.log('[BG] Injecting script...');
     const extractCode = extractAndCopy.toString();
     console.log('[BG] Extract function length:', extractCode.length);
@@ -32,14 +40,16 @@ async function runOnActiveTab(options = {}) {
           if (msg.result && msg.result.ok) {
             (async () => {
               let downloadedJson = false;
-              if (runtimeOptions.downloadJson && msg.result.json) {
+              // The download uses the selected format, like the clipboard.
+              const asText = runtimeOptions.copyFormat === 'text';
+              if (runtimeOptions.downloadJson && (asText ? msg.result.transcript : msg.result.json)) {
                 try {
-                  const filename = msg.result.filename || `ticket-${Date.now()}.json`;
-                  const jsonPayload = JSON.stringify(msg.result.json, null, 2);
-                  const blobUrl = URL.createObjectURL(new Blob([jsonPayload], { type: 'application/json' }));
+                  const filename = msg.result.filename || `ticket-${Date.now()}.${asText ? 'txt' : 'json'}`;
+                  const payload = asText ? msg.result.transcript : JSON.stringify(msg.result.json, null, 2);
+                  const blobUrl = URL.createObjectURL(new Blob([payload], { type: asText ? 'text/plain;charset=utf-8' : 'application/json' }));
                   await browser.downloads.download({ url: blobUrl, filename, saveAs: false });
                   downloadedJson = true;
-                  console.log('[BG] JSON downloaded:', filename);
+                  console.log('[BG] Export downloaded:', filename);
                   setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
                 } catch (downloadError) {
                   console.error('[BG] Failed to download JSON:', downloadError);
@@ -53,9 +63,9 @@ async function runOnActiveTab(options = {}) {
                 messageParts.push('Failed to copy to clipboard');
               }
               if (downloadedJson) {
-                messageParts.push('JSON downloaded');
+                messageParts.push(`${asText ? 'Text' : 'JSON'} downloaded`);
               } else if (runtimeOptions.downloadJson) {
-                messageParts.push('JSON download failed');
+                messageParts.push(`${asText ? 'Text' : 'JSON'} download failed`);
               }
 
               resolve({
@@ -118,8 +128,44 @@ async function runOnActiveTab(options = {}) {
   }
 }
 
+// Revoke a blob URL once its download no longer needs it.
+const pendingBlobUrls = new Map();
+browser.downloads.onChanged.addListener(delta => {
+  const state = delta.state && delta.state.current;
+  if (pendingBlobUrls.has(delta.id) && (state === 'complete' || state === 'interrupted')) {
+    URL.revokeObjectURL(pendingBlobUrls.get(delta.id));
+    pendingBlobUrls.delete(delta.id);
+  }
+});
+
+// Attachments, sent one by one from the page by extractAndCopy.
+async function saveFile(msg) {
+  let blob;
+  if (typeof msg.text === 'string') {
+    blob = new Blob([msg.text], { type: msg.mime || 'text/plain;charset=utf-8' });
+  } else {
+    const bin = atob(msg.base64 || '');
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    blob = new Blob([bytes], { type: msg.mime || 'application/octet-stream' });
+  }
+  const url = URL.createObjectURL(blob);
+  try {
+    const id = await browser.downloads.download({ url, filename: msg.filename, saveAs: false, conflictAction: 'uniquify' });
+    pendingBlobUrls.set(id, url);
+    return { ok: true };
+  } catch (e) {
+    URL.revokeObjectURL(url);
+    console.error('[BG] Failed to save file:', msg.filename, e);
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 browser.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === 'RUN_EXTRACTION') {
     return runOnActiveTab(msg.options || {});
+  }
+  if (msg && msg.type === 'SAVE_FILE') {
+    return saveFile(msg);
   }
 });
