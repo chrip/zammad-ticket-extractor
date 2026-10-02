@@ -214,6 +214,26 @@ test('JSON-lines log: user IDs from fields are replaced on every line', () => {
   assert.equal(out.split('\n').length, 2);
 });
 
+test('an office server log: process IDs, dates, source paths and user agents survive', () => {
+  const p = setup();
+  const lines = [
+    'kit-00041-00041 2026-09-29 09:11:22.161833 [ kitbgsv_009_007 ] WRN  #34: Socket still open|home/builder/jenkins/workspace/x/officed-8.1.0.2/net/Socket.hpp:1296',
+    'wsd-00001-00028 2026-09-29 09:22:19.274733 [ docbroker_004 ] WRN  ToClient-118: tilecombine',
+    'wsd-00001-00028 2026-09-29 09:11:36.479055 [ websrv_poll ] ERR  #67: WOPI::CheckFileInfo returned 403 for URI [https://cloud.acme-corp.com/index.php/apps/officeapp/wopi/files/160907786_ocnv7w38j5r3?access_token=abc]|wsd/wopi/CheckFileInfo.cpp:98',
+    'GET /office/ws?WOPISrc=https%3A%2F%2Fcloud.acme-corp.com%2Findex.php%2Fapps%2Fofficeapp%2Fwopi%2Ffiles%2F161088623_ocnv7w38j5r3&access_token=XXX / User-Agent: Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 / X-Forwarded-For: 85.214.7.7',
+    'Set in /var/www/html/data/appdata_ocnv7w38j5r3/preview and cookie ocnv7w38j5r3=x'
+  ].join('\n');
+  const out = p.file(lines);
+  assert.ok(out.startsWith('kit-00041-00041 2026-09-29 09:11:22.161833'), out);
+  assert.ok(out.includes('wsd-00001-00028 2026-09-29 09:22:19.274733'), out);
+  assert.ok(out.includes('WOPI::CheckFileInfo') && out.includes('wsd/wopi/CheckFileInfo.cpp') && out.includes('/officeapp/wopi/files/160907786_ocinstance01'), out);
+  assert.ok(out.includes('WOPISrc=https%3A%2F%2Fcloud.domain1.example%2Findex.php'), out);
+  assert.ok(out.includes('Chrome/120.0.0.0 Safari/537.36'), out);
+  assert.ok(out.includes('X-Forwarded-For: 192.0.2.1'), out);
+  assert.ok(!out.includes('ocnv7w38j5r3'), out);
+  assert.ok(!out.includes('acme-corp'), out);
+});
+
 test('same pseudonyms across conversation and attachment', () => {
   const p = setup();
   p.text('Instance cloud.acme-corp.com, IP 85.214.1.2');

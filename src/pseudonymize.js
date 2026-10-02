@@ -355,14 +355,30 @@ function createPseudonymizer(config = {}) {
   // Path segments that hold a user ID or a share token: WebDAV, avatar and
   // share links of self-hosted clouds, and per-user data directories.
   const userPathRx = /(\/dav\/(?:files|uploads|trashbin|versions|calendars|principals\/users|addressbooks\/users)\/|\/avatar\/)([^/\s"'?#<>]+)/g;
-  const dataDirRx = /(\/)([^/\s"'?#<>]+)(\/(?:files|files_trashbin|files_versions|files_encryption|cache|uploads|thumbnails)(?=[/\s"']|$))/g;
+  // only below a data directory: "/srv/nc-data/<user>/files", not "/apps/x/wopi/files"
+  const dataDirRx = /(\/[^/\s"'?#<>]*data[^/\s"'?#<>]*\/)([^/\s"'?#<>]+)(\/(?:files|files_trashbin|files_versions|files_encryption|cache|uploads|thumbnails)(?=[/\s"']|$))/gi;
   // "/apps/files/js" and "/var/cache" are code and system paths, not a user's data dir.
   const notDataDirUser = /^(appdata_.*|__groupfolders|files_external|apps|apps-extra|custom_apps|core|lib|dist|js|css|img|l10n|templates|index\.php|remote\.php|ocs|dav|webdav|var|www|html|htdocs|srv|opt|usr|tmp|etc|data|config|resources|settings|admin|personal|s|u|ajax|api|v\d+(\.\d+)?|[\w-]+\.(php|js|json))$/i;
   const shareRx = /(\/(?:index\.php\/)?s\/)([A-Za-z0-9]{8,})/g;
   const homeRx = /((?:\/home|\/Users|[A-Z]:\\Users)[\\/])([^\\/\s"'<>]+)/g;
 
+  // Instance IDs ("oc" + 10 characters) show up in WOPI file IDs and appdata
+  // paths; once seen, the same ID is replaced everywhere (cookie names, config).
+  const instanceRx = /(\d_|appdata_)(oc[a-z0-9]{10})(?![a-z0-9])/g;
+
+  function instanceId(id) {
+    const pseudonym = lookup('instance', id, n => `ocinstance${String(n).padStart(2, '0')}`);
+    addTerm(id, pseudonym);
+    return pseudonym;
+  }
+
+  function learnInstanceIds(input) {
+    for (const m of String(input).matchAll(instanceRx)) instanceId(m[2]);
+  }
+
   function path(p) {
     return p
+      .replace(instanceRx, (m, pre, id) => pre + instanceId(id))
       .replace(shareRx, (m, pre, token) => pre + lookup('share', token, n => `SHARE${n}`))
       .replace(userPathRx, (m, pre, user) => pre + userIdOrKeep(user))
       .replace(dataDirRx, (m, pre, user, post) => notDataDirUser.test(user) ? m : pre + userIdOrKeep(user) + post)
@@ -428,6 +444,14 @@ function createPseudonymizer(config = {}) {
       return hold(url(m.slice(0, m.length - trail.length))) + trail;
     });
 
+    // 3b. URL-encoded URLs in query strings: WOPISrc=https%3A%2F%2Fcloud.acme.com%2F...
+    s = s.replace(/\b((?:https?|wss?)%3A%2F%2F)([a-z0-9.-]+|\[[0-9a-f:]+\])/gi, (m, pre, h) => {
+      const lower = h.toLowerCase();
+      if (isPublic(lower)) return m;
+      if (isInternal(lower)) return pre + hold(lookup('internalhost', lower, n => `internal-host-${n}.example`));
+      return pre + hold(/^\d{1,3}(\.\d{1,3}){3}$/.test(h) ? ipv4(h) : host(h));
+    });
+
     // 4. paths outside URLs (logs, command output)
     s = s.replace(/(?:\/|[A-Z]:\\)[^\s"'<>]*/g, m => path(m));
 
@@ -438,6 +462,8 @@ function createPseudonymizer(config = {}) {
     s = s.replace(/(?<![\w.])(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}(?!\w|\.\d)/g, (m, offset, whole) => {
       const before = whole.slice(Math.max(0, offset - 24), offset);
       if (/(version|ver\.?|release|\bv)["'\s:=]*$/i.test(before)) return m;
+      // user agent tokens and package names: "Chrome/120.0.0.0", "server-8.1.0.2"
+      if (/[A-Za-z][\w.-]*[/-]$/.test(before)) return m;
       // "<Product> 28.0.1.2" for a protected product name
       const word = (before.match(/([\p{L}-]+)\s+$/u) || [])[1];
       if (word && protectedWords.has(word.toLowerCase())) return m;
@@ -469,7 +495,8 @@ function createPseudonymizer(config = {}) {
     });
 
     // 9. phone numbers: international form, or after a label
-    s = s.replace(/(?<![\w+])(?:\+|00)[1-9]\d{0,2}[\s./-]?(?:\(0\)[\s./-]?)?\d[\d\s./-]{5,16}\d(?!\w)/g, m => hold(addPhone(m) || m));
+    // "+49 ...", not "00...": in logs that is a process ID or a timestamp
+    s = s.replace(/(?<![\w+])\+[1-9]\d{0,2}[\s./-]?(?:\(0\)[\s./-]?)?\d[\d\s./-]{5,16}\d(?!\w)/g, m => hold(addPhone(m) || m));
     s = s.replace(/(\b(?:Tel|Telefon|Phone|Mobil|Mobile|Handy|Fax|Cell)\.?\s*[:.]?\s*)(\(?0\d[\d\s()./-]{5,16}\d)/gi, (m, pre, num) => pre + hold(addPhone(num) || num));
 
     // 10. known names, logins, organizations
@@ -490,6 +517,7 @@ function createPseudonymizer(config = {}) {
   // it comes before the salutation.
   function learn(input) {
     if (!input) return;
+    learnInstanceIds(input);
     for (const m of String(input).matchAll(salutationRx)) {
       const name = m[3];
       const parts = name.split(/[ \t]+/);
@@ -504,6 +532,7 @@ function createPseudonymizer(config = {}) {
   // JSON-lines logs: collect user IDs first so that a user
   // seen on line 900 is also replaced in a path on line 3.
   function scanLog(content) {
+    learnInstanceIds(content);
     const userRx = /"(?:user|uid|userId|user_id|userid|owner|actor)"\s*:\s*"([^"\\]{1,128})"/g;
     let m;
     while ((m = userRx.exec(content))) addUserId(m[1]);
