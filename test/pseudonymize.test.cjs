@@ -129,6 +129,13 @@ test('unknown names after a salutation, also where they come first', () => {
   assert.equal(p.text(generic), generic);
 });
 
+test('greeting the support company is no person', () => {
+  const p = createPseudonymizer();
+  p.addInternalDomain('supportco.io');
+  const out = p.text('Dear Supportco Support,\nwe use it.\n"Supportco support ticket received"\nJonas via Supportco Support');
+  assert.equal(out, 'Dear Supportco Support,\nwe use it.\n"Supportco support ticket received"\nJonas via Supportco Support');
+});
+
 test('German salutations still work', () => {
   const p = setup();
   assert.equal(p.text('Hallo Herr Weber, Liebe Grüße'), 'Hallo Herr Person-1, Liebe Grüße');
@@ -231,6 +238,8 @@ test('an office server log: process IDs, dates, source paths and user agents sur
   assert.ok(out.includes('Chrome/120.0.0.0 Safari/537.36'), out);
   assert.ok(out.includes('X-Forwarded-For: 192.0.2.1'), out);
   assert.ok(!out.includes('ocnv7w38j5r3'), out);
+  assert.equal(p.text('document [https%3A%2F%2Fcloud.acme-corp.com%3A443%2Findex.php%2Ffiles%2F159711005_ocnv7w38j5r3]'),
+    'document [https%3A%2F%2Fcloud.domain1.example%3A443%2Findex.php%2Ffiles%2F159711005_ocinstance01]');
   assert.ok(!out.includes('acme-corp'), out);
 });
 

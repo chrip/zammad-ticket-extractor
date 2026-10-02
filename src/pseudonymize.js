@@ -452,6 +452,9 @@ function createPseudonymizer(config = {}) {
       return pre + hold(/^\d{1,3}(\.\d{1,3}){3}$/.test(h) ? ipv4(h) : host(h));
     });
 
+    // 3c. instance IDs anywhere, also inside URL-encoded text ("%2F12_ocabc...")
+    s = s.replace(instanceRx, (m, pre, id) => pre + hold(instanceId(id)));
+
     // 4. paths outside URLs (logs, command output)
     s = s.replace(/(?:\/|[A-Z]:\\)[^\s"'<>]*/g, m => path(m));
 
@@ -521,7 +524,9 @@ function createPseudonymizer(config = {}) {
     for (const m of String(input).matchAll(salutationRx)) {
       const name = m[3];
       const parts = name.split(/[ \t]+/);
-      if (salutationStop.has(parts[0]) || parts.every(w => protectedWords.has(w.toLowerCase()))) continue;
+      // "Dear Acme Support" (Acme protected): no word of it is a name
+      const isName = w => !salutationStop.has(w) && !protectedWords.has(w.toLowerCase()) && !nameStopwords.has(w.toLowerCase());
+      if (salutationStop.has(parts[0]) || !parts.some(isName)) continue;
       const known = terms.get(name.toLowerCase());
       const pseudonym = known ? known.pseudonym : lazyLookup('person:Person', name.toLowerCase(), 'Person');
       for (const part of parts) if (!salutationStop.has(part)) addTerm(part, pseudonym, { capitalized: true });
