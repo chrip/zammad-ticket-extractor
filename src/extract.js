@@ -52,30 +52,54 @@ async function extractAndCopy(options = {}) {
     }
   }
 
-  function registerPeople(all, articles) {
+  // Our own staff are users whose Zammad role grants agent or admin permissions.
+  // Agents may read the role list; without it nobody counts as staff.
+  async function loadStaffRoleIds() {
+    try {
+      const roles = await api('/api/v1/roles?expand=true');
+      const ids = new Set();
+      for (const r of roles || []) {
+        const perms = Array.isArray(r.permissions) ? r.permissions : [];
+        if (perms.some(p => /^(ticket\.agent|admin)(\.|$)/.test(String(p)))) ids.add(r.id);
+      }
+      return ids;
+    } catch (e) {
+      console.warn('[EXTRACT] Roles unavailable, every person gets pseudonymized:', e);
+      return null;
+    }
+  }
+
+  // Returns whether staff could be told apart from the customer side.
+  function registerPeople(all, articles, staffRoleIds) {
     const assets = (all && all.assets) || {};
     const ticket = (assets.Ticket || {})[all && all.ticket_id] || {};
-    const users = assets.User || {};
+    const users = Object.values(assets.User || {}).filter(u => u && u.id !== 1); // id 1 is Zammad's system user
     const orgs = assets.Organization || {};
-    const customerOrg = ticket.organization_id;
-    const agentIds = new Set([ticket.owner_id]);
-    for (const a of articles) if (a.sender === 'Agent' && a.created_by_id) agentIds.add(a.created_by_id);
     const domainOf = mail => String(mail || '').toLowerCase().split('@')[1] || '';
-    // The agents' mail domains are the support team's own: their URLs are internal.
-    for (const u of Object.values(users)) {
-      if (u && agentIds.has(u.id) && u.id !== ticket.customer_id) pseudo.addInternalDomain(domainOf(u.email));
-    }
-    const isCustomerUser = u => u.id === ticket.customer_id || (customerOrg && u.organization_id === customerOrg);
-    const isAgentUser = u => !isCustomerUser(u) && (agentIds.has(u.id) || pseudo.isInternal(domainOf(u.email)));
+    // The ticket's customer is customer side even with an agent role (test tickets).
+    const isStaff = u => Boolean(staffRoleIds) && u.id !== ticket.customer_id &&
+      (u.role_ids || []).some(id => staffRoleIds.has(id));
+    const staff = users.filter(isStaff);
+    const staffMails = new Set(staff.map(u => String(u.email || '').toLowerCase()).filter(Boolean));
+    const customer = users.find(u => u.id === ticket.customer_id);
+    const customerDomain = domainOf(customer && customer.email);
 
-    // Agents first, so their names are protected before customers are added;
+    // Staff mail domains are the support team's own: their URLs are internal,
+    // and the staff organization's name is never taken for a person.
+    for (const u of staff) {
+      pseudo.addInternalDomain(domainOf(u.email));
+      const org = orgs[u.organization_id];
+      if (org && org.name && org.id !== ticket.organization_id) pseudo.addProtectedName(org.name);
+    }
+
+    // Staff first, so their names are protected before customers are added;
     // then the ticket's customer, so that is Customer-1.
-    const rank = u => isAgentUser(u) ? 0 : u.id === ticket.customer_id ? 1 : 2;
-    const ordered = Object.values(users).filter(Boolean).sort((a, b) => rank(a) - rank(b));
-    const customerOrgIds = new Set([customerOrg]);
-    for (const u of ordered) {
-      if (u.id === 1) continue; // id 1 is Zammad's system user
-      const role = isCustomerUser(u) ? 'customer' : isAgentUser(u) ? 'agent' : 'person';
+    const rank = u => isStaff(u) ? 0 : u.id === ticket.customer_id ? 1 : 2;
+    const customerOrgIds = new Set([ticket.organization_id]);
+    for (const u of users.sort((a, b) => rank(a) - rank(b))) {
+      const sameCompany = (ticket.organization_id && u.organization_id === ticket.organization_id) ||
+        (customerDomain && domainOf(u.email) === customerDomain);
+      const role = isStaff(u) ? 'agent' : (u.id === ticket.customer_id || sameCompany) ? 'customer' : 'person';
       if (role !== 'agent' && u.organization_id) customerOrgIds.add(u.organization_id);
       const address = [u.street, u.address, [u.zip, u.city].filter(Boolean).join(' ')].filter(v => v && String(v).trim());
       pseudo.addPerson({
@@ -84,30 +108,28 @@ async function extractAndCopy(options = {}) {
       });
       if (u.web) pseudo.text(u.web);
     }
-    // Only the customer side's organizations; the support company stays readable
-    // and its name is never taken for a person ("<Company> Support" senders).
-    for (const u of Object.values(users)) {
-      const org = u && isAgentUser(u) && orgs[u.organization_id];
-      if (org && org.name && !customerOrgIds.has(org.id)) pseudo.addProtectedName(org.name);
-    }
     for (const o of Object.values(orgs)) {
       if (o && o.name && customerOrgIds.has(o.id)) pseudo.addOrganization(o.name, String(o.domain || '').split(/[\s,;]+/).filter(Boolean));
     }
     // Article headers name people who are no Zammad user: "Name <mail>" in From/To/Cc.
+    // Only a confirmed staff mail makes someone staff; an agent may log a call
+    // or forward a mail with the customer in From.
     for (const a of articles) {
       for (const field of [a.from, a.to, a.cc, a.reply_to]) {
         if (!field) continue;
         for (const part of String(field).split(/,(?![^<]*>)/)) {
-          const mail = (part.match(/<([^>]+)>/) || part.match(/([^\s<>"]+@[^\s<>"]+)/) || [])[1] || '';
+          const mail = ((part.match(/<([^>]+)>/) || part.match(/([^\s<>"]+@[^\s<>"]+)/) || [])[1] || '').trim();
           const name = part.replace(/<[^>]*>/g, '').replace(/["']/g, '').trim();
           if (!mail && !name) continue;
-          const role = pseudo.isInternal(domainOf(mail)) || (a.sender === 'Agent' && field === a.from) ? 'agent'
-            : a.sender === 'Customer' && field === a.from ? 'customer' : 'person';
-          pseudo.addPerson({ name: name.includes('@') ? '' : name, email: mail.trim(), role });
+          const role = staffMails.has(mail.toLowerCase()) ? 'agent'
+            : (customerDomain && domainOf(mail) === customerDomain) || (a.sender === 'Customer' && field === a.from) ? 'customer' : 'person';
+          pseudo.addPerson({ name: name.includes('@') ? '' : name, email: mail, role });
         }
       }
     }
+    return Boolean(staffRoleIds);
   }
+
 
   function textFromNode(node) {
     if (!node) return "";
@@ -285,7 +307,8 @@ async function extractAndCopy(options = {}) {
   const [ticketAll, apiArticles] = (anonymize || downloadAttachments)
     ? await Promise.all([anonymize ? loadTicketAssets() : null, loadArticles()])
     : [null, []];
-  if (pseudo) registerPeople(ticketAll, apiArticles);
+  const staffRoleIds = pseudo && ticketAll ? await loadStaffRoleIds() : null;
+  const staffKnown = pseudo ? registerPeople(ticketAll, apiArticles, staffRoleIds) : false;
 
   function getArticleDate(article) {
     const linkTime = article.parentElement?.querySelector('a small .humanTimeFromNow[datetime]') ||
@@ -462,10 +485,11 @@ async function extractAndCopy(options = {}) {
 
   let title = rawTitle;
   if (pseudo) {
-    // DOM senders cover tickets the API did not return.
-    for (const role of ['agent', 'customer']) {
-      messages.forEach(m => { if (m.role === role) pseudo.addPerson({ name: m.authorName, email: m.authorEmail, role }); });
-    }
+    // DOM senders cover people the API did not return. The page's "agent" class
+    // only says who wrote the article, so it never makes a name readable.
+    messages.forEach(m => {
+      if (m.role !== 'system') pseudo.addPerson({ name: m.authorName, email: m.authorEmail, role: m.role, keep: false });
+    });
     // Names known only from a salutation in a later message count everywhere.
     pseudo.learn(rawTitle);
     messages.forEach(m => pseudo.learn(m.contentText));
@@ -552,7 +576,8 @@ async function extractAndCopy(options = {}) {
     copiedFormat: copyFormat,
     anonymized: anonymize,
     attachments: attachmentStats,
-    ticketAssetsLoaded: Boolean(ticketAll)
+    ticketAssetsLoaded: Boolean(ticketAll),
+    staffKnown
   };
 
   console.log('[EXTRACT] Returning result:', {

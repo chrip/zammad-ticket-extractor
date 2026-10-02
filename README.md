@@ -36,10 +36,10 @@ is stored: the mapping exists only while one export runs.
 | What | Becomes |
 | --- | --- |
 | Customers and other people (ticket users, From/To/Cc, sender names) | `Customer-1`, `Person-1` |
-| Support agents, only with "Keep support agent names" off | `Agent-1` |
+| Support agents, only with "Keep support agent names" off or when Zammad roles are not readable | `Agent-1` |
 | Names after a salutation ("Hi Tom", "Dear Mr. Weber", "Thanks, Anna") | `Person-N` |
 | Organizations, with and without legal form | `Org-1` |
-| Mail addresses | `customer-1@example.invalid`, `user-N@example.invalid` |
+| Mail addresses, always, the support team's own included | `customer-1@example.invalid`, `agent-1@example.invalid`, `user-N@example.invalid` |
 | Customer host names and URLs (path user IDs, share tokens, query values) | `cloud.domain1.example`, `host1.domain1.example`, `/s/SHARE1`, `?dir=[redacted]` |
 | URLs on internal domains that are not public (tracker, CRM, portal, internal cloud) | `[internal-link-N]` |
 | Public IPv4 / private IPv4 / IPv6 / MAC | `192.0.2.x` / `10.255.x.x` / `2001:db8::x` / `02:00:00:00:..` |
@@ -47,8 +47,7 @@ is stored: the mapping exists only while one export runs.
 | User IDs in JSON logs, WebDAV and data directory paths | `user-N` |
 | Passwords, secrets, tokens, salts, `instanceid` in config dumps and logs | `[redacted]` |
 
-Kept as is: support agents' names and internal mail addresses (switch off with
-"Keep support agent names"), the support company's name and the protected
+Kept as is: support agents' names (switch off with "Keep support agent names"), the support company's name and the protected
 words, loopback addresses, version numbers, URLs on public hosts, and the
 ticket number. The page URL is left out.
 
@@ -61,9 +60,14 @@ URLs fall into three groups:
   (tracker, CRM, portal, internal cloud) is what is confidential.
 - **Everything else** is a customer host and gets pseudonymized.
 
+Who is support staff comes from Zammad roles only: users whose role grants
+an agent or admin permission (`/api/v1/roles`). Everyone else is customer
+side, also a customer's colleague that an agent logged a call for, and gets
+pseudonymized. If the roles are not readable, every person is pseudonymized.
+
 No company or product is built in. The extension learns the support side
-from the ticket: the agents' mail domains become internal domains, and the
-agents' organization becomes a protected name, so a sender like
+from the ticket: the staff mail domains become internal domains, and the
+staff organization becomes a protected name, so a sender like
 "<Company> Support" does not turn every mention of the company into a
 pseudonym.
 

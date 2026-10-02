@@ -24,8 +24,8 @@ function createPseudonymizer(config = {}) {
   // The support team's own domains: their URLs (tracker, CRM, portal, internal
   // cloud) are dropped unless public. The caller adds the agents' mail domains.
   const internalDomains = hostPatterns(config.internalDomains);
-  // Support agents are the exporting team itself: their names and internal mail
-  // addresses stay readable unless the caller asks otherwise.
+  // Support agents are the exporting team itself: their names stay readable
+  // unless the caller asks otherwise. Mail addresses are always pseudonymized.
   const keepAgents = config.keepAgents !== false;
 
   // Last labels that are file extensions or code, not TLDs: "server.log", "OC.Files.App".
@@ -76,6 +76,12 @@ function createPseudonymizer(config = {}) {
     const map = maps.get(kind);
     if (!map.has(key)) map.set(key, make(next(kind)));
     return map.get(key);
+  }
+
+  // A fixed pseudonym that does not use up a counter: a known person's mail.
+  function assign(kind, key, value) {
+    if (!maps.has(kind)) maps.set(kind, new Map());
+    if (!maps.get(kind).has(key)) maps.get(kind).set(key, value);
   }
 
   function escapeRegex(s) {
@@ -132,17 +138,18 @@ function createPseudonymizer(config = {}) {
     'billing hello team help helpdesk it webmaster postmaster root abuse security privacy datenschutz buchhaltung').split(' '));
 
   // Register a person: every name part and the full name map to one pseudonym.
-  function addPerson({ firstname = '', lastname = '', name = '', email = '', login = '', phones = [], extra = [], role = 'person' } = {}) {
+  // keep: false for an agent the caller could not confirm as staff.
+  function addPerson({ firstname = '', lastname = '', name = '', email = '', login = '', phones = [], extra = [], role = 'person', keep = true } = {}) {
     const key = (email || `${firstname} ${lastname}`.trim() || name || login).toLowerCase();
     if (!key) return null;
-    if (role === 'agent' && keepAgents) {
-      const full = name || `${firstname} ${lastname}`.trim();
-      for (const part of [full, firstname, lastname, ...full.split(/[\s,]+/)]) protect(part);
-      if (email) keptEmails.add(email.toLowerCase());
-      return full || email;
-    }
     const label = role === 'customer' ? 'Customer' : role === 'agent' ? 'Agent' : 'Person';
     const pseudonym = lookup('person:' + label, key, n => `${label}-${n}`);
+    if (role === 'agent' && keepAgents && keep) {
+      const full = name || `${firstname} ${lastname}`.trim();
+      for (const part of [full, firstname, lastname, ...full.split(/[\s,]+/)]) protect(part);
+      if (email) assign('email', email.toLowerCase(), `${pseudonym.toLowerCase()}@example.invalid`);
+      return full || pseudonym;
+    }
     const full = name || `${firstname} ${lastname}`.trim();
     const cap = { capitalized: true };
     // "Acme Support" (Acme protected) or "Admin Team" names a mailbox, not a person.
@@ -155,7 +162,7 @@ function createPseudonymizer(config = {}) {
       if (part && !nameStopwords.has(part.toLowerCase().replace(/\.$/, ''))) addTerm(part, pseudonym, cap);
     }
     if (email) {
-      lookup('email', email.toLowerCase(), () => `${pseudonym.toLowerCase()}@example.invalid`);
+      assign('email', email.toLowerCase(), `${pseudonym.toLowerCase()}@example.invalid`);
       // "c.schaefer" identifies a person, "info" or "support" does not.
       const local = email.split('@')[0];
       if (/[a-z]/i.test(local) && local.length >= 4 && !genericMailboxes.has(local.toLowerCase())) addTerm(local, pseudonym.toLowerCase());
@@ -218,14 +225,9 @@ function createPseudonymizer(config = {}) {
     return lookup('phone', key, n => `[phone-${n}]`);
   }
 
-  const keptEmails = new Set();
-
+  // Every address, also the support team's own: mailboxes and staff alike.
   function email(address) {
-    const lower = address.toLowerCase();
-    if (keptEmails.has(lower)) return address;
-    // Notification recipients and team mailboxes of the support side.
-    if (keepAgents && isInternal(lower.split('@')[1])) return address;
-    return lookup('email', lower, n => `user-${n}@example.invalid`);
+    return lookup('email', address.toLowerCase(), n => `user-${n}@example.invalid`);
   }
 
   function matchesHost(h, pattern) {

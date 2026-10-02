@@ -93,6 +93,8 @@ async function runExtraction({ downloadJson }) {
     }
     if (currentSettings.anonymize && !res.ticketAssetsLoaded) {
       parts.push('Ticket users not readable via API, only senders were pseudonymized by name.');
+    } else if (currentSettings.anonymize && currentSettings.keepAgents !== false && !res.staffKnown) {
+      parts.push('Agent roles not readable, so agents were pseudonymized too.');
     }
     const failed = !copied || (downloadJson && !res.downloadedJson) || Boolean(att && att.failed);
     setStatus(parts.join(' '), failed);

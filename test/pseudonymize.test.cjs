@@ -21,9 +21,15 @@ test('known people, their mail and phone get consistent pseudonyms', () => {
   assert.equal(out, 'Hi Mr. Customer-1, thanks Customer-1! Mail customer-1@example.invalid or call [phone-1]. Best, Anna Young');
 });
 
-test('support agents stay readable, also in salutations and internal mails', () => {
+test('support agents stay readable by name, their mails are pseudonymized', () => {
   const p = setup();
-  assert.equal(p.text('Hi Anna, thanks. Cc: anna.young@supportco.io, office-team@supportco.io'), 'Hi Anna, thanks. Cc: anna.young@supportco.io, office-team@supportco.io');
+  assert.equal(p.text('Hi Anna, thanks. Cc: anna.young@supportco.io, office-team@supportco.io'), 'Hi Anna, thanks. Cc: agent-1@example.invalid, user-1@example.invalid');
+});
+
+test('an agent the caller could not confirm as staff is pseudonymized', () => {
+  const p = createPseudonymizer();
+  p.addPerson({ name: 'Paul Grant', email: 'paul.grant@acme-corp.com', role: 'agent', keep: false });
+  assert.equal(p.text('Hi Paul, Paul Grant wrote'), 'Hi Agent-1, Agent-1 wrote');
 });
 
 test('with keepAgents off, agents are pseudonymized too', () => {
