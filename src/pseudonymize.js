@@ -7,7 +7,8 @@
 // Hosts whose URLs are public knowledge: general docs, forums, issue trackers.
 // "*.example.org" matches example.org and every subdomain, anything else one host.
 // Vendor-neutral only; a team adds its own public sites in the popup settings.
-const DEFAULT_PUBLIC_HOSTS = [
+// var, not const: the file is injected into the page again on every export.
+var DEFAULT_PUBLIC_HOSTS = [
   'github.com', 'gist.github.com', '*.githubusercontent.com', 'gitlab.com',
   '*.php.net', '*.apache.org', 'nginx.org', 'docs.nginx.com', 'developer.mozilla.org',
   'learn.microsoft.com', 'support.microsoft.com', 'support.apple.com', 'docs.docker.com', 'hub.docker.com',

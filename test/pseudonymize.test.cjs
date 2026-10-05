@@ -6,6 +6,15 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const createPseudonymizer = new Function(readFileSync(join(__dirname, '../src/pseudonymize.js'), 'utf8') + '\nreturn createPseudonymizer;')();
 
+test('the script can be injected twice into the same page', () => {
+  const vm = require('node:vm');
+  const ctx = vm.createContext({});
+  const code = readFileSync(join(__dirname, '../src/pseudonymize.js'), 'utf8');
+  vm.runInContext(code, ctx);
+  assert.doesNotThrow(() => vm.runInContext(code, ctx));
+  assert.equal(typeof ctx.createPseudonymizer, 'function');
+});
+
 // A fictional support company "Supportco" (supportco.io) with a product "WidgetOffice".
 function setup() {
   const p = createPseudonymizer({ internalDomains: ['supportco.io'], publicHosts: ['help.supportco.io', 'github.com', 'forum.widgetoffice.org'] });
