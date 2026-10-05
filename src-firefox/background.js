@@ -10,7 +10,9 @@ async function runOnActiveTab(options = {}) {
     keepAgents: options.keepAgents !== false,
     publicHosts: options.publicHosts || '',
     internalDomains: options.internalDomains || '',
-    protectedWords: options.protectedWords || ''
+    protectedWords: options.protectedWords || '',
+    // matches this run's result message, never an earlier or parallel run's
+    runId: `${Date.now()}-${Math.random().toString(36).slice(2)}`
   };
 
   console.log('[BG] Starting extraction with options:', runtimeOptions);
@@ -33,7 +35,7 @@ async function runOnActiveTab(options = {}) {
     return new Promise((resolve) => {
       // Set up one-time listener for the result
       const listener = (msg) => {
-        if (msg && msg.type === 'EXTRACTION_RESULT') {
+        if (msg && msg.type === 'EXTRACTION_RESULT' && msg.runId === runtimeOptions.runId) {
           browser.runtime.onMessage.removeListener(listener);
           console.log('[BG] Received result via message:', msg.result);
 
@@ -98,12 +100,14 @@ async function runOnActiveTab(options = {}) {
               // Send result back via message
               browser.runtime.sendMessage({
                 type: 'EXTRACTION_RESULT',
+                runId: ${JSON.stringify(runtimeOptions.runId)},
                 result: result
               });
             } catch (e) {
               console.error('[INJECTED] Extraction error:', e);
               browser.runtime.sendMessage({
                 type: 'EXTRACTION_RESULT',
+                runId: ${JSON.stringify(runtimeOptions.runId)},
                 result: { 
                   ok: false, 
                   error: e?.message || String(e), 

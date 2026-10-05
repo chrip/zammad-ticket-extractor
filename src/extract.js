@@ -45,13 +45,28 @@ async function extractAndCopy(options = {}) {
     }
   }
 
+  const urlTicketId = (location.hash.match(/ticket\/zoom\/(\d+)/) || location.pathname.match(/\/tickets?\/(\d+)/) || [])[1] || '';
+
+  // Zammad keeps every ticket opened in its taskbar in the page, each in its
+  // own container, and only hides the inactive ones. Everything is read from
+  // the shown ticket's container only, or two customers' tickets get mixed.
+  function findTicketRoot() {
+    if (urlTicketId) {
+      const box = document.getElementById(`content_permanent_TicketZoom-${urlTicketId}`);
+      const zoom = box && box.querySelector('.ticketZoom');
+      if (zoom) return zoom;
+    }
+    const shown = [...document.querySelectorAll('.ticketZoom')].filter(zoom => {
+      const box = zoom.closest('[id^="content_permanent_"]');
+      return !zoom.closest('.hide') && (!box || box.classList.contains('active'));
+    });
+    return shown.length === 1 ? shown[0] : null;
+  }
+
   // The internal ticket ID: from the URL (#ticket/zoom/123, /tickets/123),
   // else looked up by the ticket number shown on the page.
-  async function resolveTicketId() {
-    const fromUrl = (location.hash.match(/ticket\/zoom\/(\d+)/) || location.pathname.match(/\/tickets?\/(\d+)/) || [])[1];
-    if (fromUrl) return fromUrl;
-    const numberEl = document.querySelector('.ticketZoom .js-objectNumber');
-    const shown = (numberEl && (numberEl.getAttribute('data-number') || numberEl.textContent) || '').replace(/^\D*/, '').trim();
+  async function resolveTicketId(shown) {
+    if (urlTicketId) return urlTicketId;
     if (!shown) {
       apiErrors.push(`no ticket ID in ${location.pathname}${location.hash}`);
       return '';
@@ -294,9 +309,20 @@ async function extractAndCopy(options = {}) {
     return txt.trim();
   }
 
+  const ticketRoot = findTicketRoot();
+  if (!ticketRoot) {
+    const open = document.querySelectorAll('.ticketZoom').length;
+    console.error('[EXTRACT] No unambiguous ticket on page, open ticket views:', open);
+    return {
+      ok: false,
+      error: open ? `Could not tell which of the ${open} open tickets is shown. Click the ticket in the taskbar and try again.`
+        : 'No .ticketZoom found - make sure you are on a ticket page'
+    };
+  }
+
   // Expand ALL folded content - find and click all "See more" buttons
   console.log('[EXTRACT] Looking for expand buttons...');
-  const expandButtons = document.querySelectorAll('.js-toggleFold');
+  const expandButtons = ticketRoot.querySelectorAll('.js-toggleFold');
   console.log('[EXTRACT] Found', expandButtons.length, 'expand buttons');
   let clickedCount = 0;
   expandButtons.forEach(btn => {
@@ -316,25 +342,21 @@ async function extractAndCopy(options = {}) {
     await new Promise(resolve => setTimeout(resolve, 300));
   }
   // Remove height restrictions on all articles
-  document.querySelectorAll('.textBubble-content[style*="height"]').forEach(el => { el.style.removeProperty('height'); });
-
-  console.log('[EXTRACT] Looking for .ticketZoom...');
-  const ticketRoot = document.querySelector('.ticketZoom');
-  if (!ticketRoot) {
-    console.error('[EXTRACT] No .ticketZoom found on page');
-    console.error('[EXTRACT] Current URL:', location.href);
-    return { ok: false, error: 'No .ticketZoom found - make sure you are on a ticket page' };
-  }
-  console.log('[EXTRACT] Found ticketZoom element');
+  ticketRoot.querySelectorAll('.textBubble-content[style*="height"]').forEach(el => { el.style.removeProperty('height'); });
 
   const rawTitle = (ticketRoot.querySelector('.js-objectTitle') || {}).textContent?.trim() || '';
   const number = ticketRoot.querySelector('.js-objectNumber')?.getAttribute('data-number')?.replace(/^Ticket#/, '') ||
     (ticketRoot.querySelector('.js-objectNumber') || {}).textContent?.trim() || '';
 
-  if (anonymize || downloadAttachments) ticketId = await resolveTicketId();
+  if (anonymize || downloadAttachments) ticketId = await resolveTicketId(number);
   const [ticketAll, apiArticles] = (anonymize || downloadAttachments)
     ? await Promise.all([anonymize ? loadTicketAssets() : null, loadArticles()])
     : [null, []];
+  // The API must describe the same ticket the page shows.
+  const apiTicket = ticketAll && ((ticketAll.assets || {}).Ticket || {})[ticketAll.ticket_id];
+  if (apiTicket && number && apiTicket.number && String(apiTicket.number) !== String(number)) {
+    return { ok: false, error: `Ticket mismatch: the page shows #${number}, the API returned #${apiTicket.number}. Reload the ticket and try again.` };
+  }
   const staffRoleIds = pseudo && ticketAll ? await loadStaffRoleIds() : null;
   const staffKnown = pseudo ? registerPeople(ticketAll, apiArticles, staffRoleIds) : false;
 
@@ -469,7 +491,7 @@ async function extractAndCopy(options = {}) {
 
   // Extract ALL articles from the page
   console.log('[EXTRACT] Looking for articles...');
-  const allArticles = document.querySelectorAll('.ticket-article-item');
+  const allArticles = ticketRoot.querySelectorAll('.ticket-article-item');
   console.log('[EXTRACT] Found', allArticles.length, 'articles');
   const messages = [];
   allArticles.forEach((article, idx) => {
@@ -513,6 +535,15 @@ async function extractAndCopy(options = {}) {
   });
 
   console.log('[EXTRACT] Extracted', messages.length, 'messages');
+
+  // Every article on the page must belong to the ticket the API returned.
+  if (apiArticles.length) {
+    const known = new Set(apiArticles.map(a => String(a.id)));
+    const foreign = messages.filter(m => m.articleId && !known.has(String(m.articleId)));
+    if (foreign.length) {
+      return { ok: false, error: `Ticket mismatch: ${foreign.length} article(s) on the page are not part of ticket #${number}. Reload the ticket and try again.` };
+    }
+  }
 
   let title = rawTitle;
   if (pseudo) {

@@ -15,6 +15,16 @@ test('the script can be injected twice into the same page', () => {
   assert.equal(typeof ctx.createPseudonymizer, 'function');
 });
 
+test('two exports share nothing: names, numbers, hosts', () => {
+  const first = createPseudonymizer();
+  first.addPerson({ name: 'John Smith', email: 'j.smith@acme-corp.com', role: 'customer' });
+  assert.equal(first.text('John Smith on cloud.acme-corp.com'), 'Customer-1 on cloud.domain1.example');
+  const second = createPseudonymizer();
+  second.addPerson({ name: 'Eve Other', email: 'eve@other-co.com', role: 'customer' });
+  assert.equal(second.text('Eve Other, John Smith, cloud.other-co.com, cloud.acme-corp.com'),
+    'Customer-1, John Smith, cloud.domain1.example, cloud.domain2.example');
+});
+
 // A fictional support company "Supportco" (supportco.io) with a product "WidgetOffice".
 function setup() {
   const p = createPseudonymizer({ internalDomains: ['supportco.io'], publicHosts: ['help.supportco.io', 'github.com', 'forum.widgetoffice.org'] });
