@@ -395,9 +395,11 @@ async function extractAndCopy(options = {}) {
     return String(name || 'file').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '_').slice(0, 120);
   }
 
+  // Returns the absolute path the browser saved the file under.
   async function saveFile(path, payload) {
     const res = await runtime.sendMessage({ type: 'SAVE_FILE', filename: `${folder}/${path}`, ...payload });
     if (!res || !res.ok) throw new Error((res && res.error) || 'download failed');
+    return res.path || '';
   }
 
   async function saveAttachments() {
@@ -434,12 +436,12 @@ async function extractAndCopy(options = {}) {
             const out = pseudo ? pseudo.file(content) : content;
             fileExt = ext || 'txt';
             entry.file = anonymize ? `${label}.${fileExt}` : safeName(gz ? att.filename.replace(/\.gz$/i, '') : att.filename);
-            await saveFile(entry.file, { text: out, mime: 'text/plain;charset=utf-8' });
+            entry.path = await saveFile(entry.file, { text: out, mime: 'text/plain;charset=utf-8' });
             entry.status = anonymize ? 'saved, pseudonymized' : 'saved';
             stats.saved++;
           } else if (includeBinary) {
             entry.file = anonymize ? `${label}.${(gz ? ext + '.gz' : ext) || 'bin'}` : safeName(att.filename);
-            await saveFile(entry.file, { base64: toBase64(original), mime: contentType || 'application/octet-stream' });
+            entry.path = await saveFile(entry.file, { base64: toBase64(original), mime: contentType || 'application/octet-stream' });
             entry.status = anonymize ? 'saved unchanged, NOT pseudonymized' : 'saved';
             stats.saved++;
           } else {
@@ -544,7 +546,8 @@ async function extractAndCopy(options = {}) {
     const d = m.date ? new Date(m.date) : null;
     const local = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
     const vis = m.visibility === 'internal' ? 'internal' : 'public';
-    const files = (m.attachments || []).map(a => `attachment: ${a.file || a.name || `.${a.type} file`} (${a.status})`).join('\n');
+    // the absolute path, so the export can be handed to an AI tool that reads the files
+    const files = (m.attachments || []).map(a => `attachment: ${a.path || a.file || a.name || `.${a.type} file`} (${a.status})`).join('\n');
     return `mail: ${m.authorName || ''}\nrole: ${m.role} (${vis})\ndate: ${local}\n${files ? files + '\n' : ''}content:\n${m.contentText}`;
   }).join('\n\n');
 
@@ -578,7 +581,7 @@ async function extractAndCopy(options = {}) {
     };
     entry.authorName = m.authorName;
     if (m.authorEmail) entry.authorEmail = m.authorEmail;
-    if (m.attachments && m.attachments.length) entry.attachments = m.attachments;
+    if (m.attachments && m.attachments.length) entry.attachments = m.attachments.map(a => { const c = { ...a }; if (!c.path) delete c.path; return c; });
     return entry;
   });
 

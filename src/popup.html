@@ -116,8 +116,25 @@
       color: #d13212;
     }
 
-    #status.hidden {
+    #status.hidden,
+    #savedTo.hidden {
       display: none;
+    }
+
+    #savedTo {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+    }
+
+    #savedPath {
+      font: 11px ui-monospace, monospace;
+      word-break: break-all;
+      user-select: all;
+      background: #f3f3f3;
+      padding: 4px 6px;
+      border-radius: 4px;
     }
 
     details {
@@ -179,6 +196,11 @@
     <button id="downloadJsonBtn">Download JSON</button>
   </div>
   <div id="status"></div>
+  <div id="savedTo" class="hidden">
+    <span>Saved to:</span>
+    <code id="savedPath"></code>
+    <button id="openFolder">Open folder</button>
+  </div>
   <details id="advanced">
     <summary>Advanced</summary>
     <label for="publicHosts">

@@ -42,6 +42,8 @@ async function runOnActiveTab(options = {}) {
           if (msg.result && msg.result.ok) {
             (async () => {
               let downloadedJson = false;
+              let exportDownloadId = null;
+              let exportPath = '';
               // The download uses the selected format, like the clipboard.
               const asText = runtimeOptions.copyFormat === 'text';
               if (runtimeOptions.downloadJson && (asText ? msg.result.transcript : msg.result.json)) {
@@ -49,7 +51,8 @@ async function runOnActiveTab(options = {}) {
                   const filename = msg.result.filename || `ticket-${Date.now()}.${asText ? 'txt' : 'json'}`;
                   const payload = asText ? msg.result.transcript : JSON.stringify(msg.result.json, null, 2);
                   const blobUrl = URL.createObjectURL(new Blob([payload], { type: asText ? 'text/plain;charset=utf-8' : 'application/json' }));
-                  await browser.downloads.download({ url: blobUrl, filename, saveAs: false });
+                  exportDownloadId = await browser.downloads.download({ url: blobUrl, filename, saveAs: false, conflictAction: 'uniquify' });
+                  exportPath = await finalPath(exportDownloadId);
                   downloadedJson = true;
                   console.log('[BG] Export downloaded:', filename);
                   setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
@@ -73,6 +76,8 @@ async function runOnActiveTab(options = {}) {
               resolve({
                 ...msg.result,
                 downloadedJson,
+                exportDownloadId,
+                exportPath,
                 message: msg.result.message || messageParts.filter(Boolean).join('. ')
               });
             })();
@@ -132,6 +137,17 @@ async function runOnActiveTab(options = {}) {
   }
 }
 
+// The absolute path the browser saved a download under (after any rename on
+// a name conflict); it is set shortly after download() resolves.
+async function finalPath(id) {
+  for (let i = 0; i < 30; i++) {
+    const [item] = await browser.downloads.search({ id });
+    if (item && item.filename) return item.filename;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return '';
+}
+
 // Revoke a blob URL once its download no longer needs it.
 const pendingBlobUrls = new Map();
 browser.downloads.onChanged.addListener(delta => {
@@ -157,7 +173,7 @@ async function saveFile(msg) {
   try {
     const id = await browser.downloads.download({ url, filename: msg.filename, saveAs: false, conflictAction: 'uniquify' });
     pendingBlobUrls.set(id, url);
-    return { ok: true };
+    return { ok: true, id, path: await finalPath(id) };
   } catch (e) {
     URL.revokeObjectURL(url);
     console.error('[BG] Failed to save file:', msg.filename, e);
@@ -171,5 +187,9 @@ browser.runtime.onMessage.addListener((msg) => {
   }
   if (msg && msg.type === 'SAVE_FILE') {
     return saveFile(msg);
+  }
+  // "Open folder" in the popup: the file manager, with the file selected
+  if (msg && msg.type === 'SHOW_DOWNLOAD') {
+    return browser.downloads.show(msg.id).then(() => ({ ok: true }), e => ({ ok: false, error: e?.message || String(e) }));
   }
 });

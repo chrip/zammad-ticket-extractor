@@ -35,6 +35,8 @@ async function runOnActiveTab(options = {}) {
   if (!result || !result.ok) return result || { ok: false, error: 'No result returned' };
 
   let downloadedJson = false;
+  let exportDownloadId = null;
+  let exportPath = '';
   // The download uses the selected format, like the clipboard.
   const asText = runtimeOptions.copyFormat === 'text';
   if (runtimeOptions.downloadJson && (asText ? result.transcript : result.json)) {
@@ -42,7 +44,8 @@ async function runOnActiveTab(options = {}) {
       // no URL.createObjectURL in a service worker; a ticket's export stays far below the 2 MB data: URL cap
       const url = (asText ? 'data:text/plain;charset=utf-8,' : 'data:application/json;charset=utf-8,') +
         encodeURIComponent(asText ? result.transcript : JSON.stringify(result.json, null, 2));
-      await chrome.downloads.download({ url, filename: result.filename || `ticket-${Date.now()}.${asText ? 'txt' : 'json'}`, saveAs: false });
+      exportDownloadId = await chrome.downloads.download({ url, filename: result.filename || `ticket-${Date.now()}.${asText ? 'txt' : 'json'}`, saveAs: false, conflictAction: 'uniquify' });
+      exportPath = await finalPath(exportDownloadId);
       downloadedJson = true;
     } catch (e) {
       console.error('[SW] Failed to download JSON:', e);
@@ -52,7 +55,7 @@ async function runOnActiveTab(options = {}) {
   const parts = [result.copied ? `Copied ${runtimeOptions.copyFormat === 'json' ? 'JSON' : 'text'} to clipboard` : 'Failed to copy to clipboard'];
   if (downloadedJson) parts.push(`${asText ? 'Text' : 'JSON'} downloaded`);
   else if (runtimeOptions.downloadJson) parts.push(`${asText ? 'Text' : 'JSON'} download failed`);
-  return { ...result, downloadedJson, message: result.message || parts.join('. ') };
+  return { ...result, downloadedJson, exportDownloadId, exportPath, message: result.message || parts.join('. ') };
 }
 
 // Attachments can exceed the 2 MB data: URL cap and a service worker has no
@@ -76,6 +79,17 @@ chrome.downloads.onChanged.addListener(delta => {
   }
 });
 
+// The absolute path the browser saved a download under (after any rename on
+// a name conflict); it is set shortly after download() resolves.
+async function finalPath(id) {
+  for (let i = 0; i < 30; i++) {
+    const [item] = await chrome.downloads.search({ id });
+    if (item && item.filename) return item.filename;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return '';
+}
+
 async function saveFile(msg) {
   try {
     await ensureOffscreen();
@@ -83,7 +97,7 @@ async function saveFile(msg) {
     if (!made || !made.url) throw new Error('offscreen document returned no URL');
     const id = await chrome.downloads.download({ url: made.url, filename: msg.filename, saveAs: false, conflictAction: 'uniquify' });
     pendingBlobUrls.set(id, made.url);
-    return { ok: true };
+    return { ok: true, id, path: await finalPath(id) };
   } catch (e) {
     console.error('[SW] Failed to save file:', msg.filename, e);
     return { ok: false, error: e?.message || String(e) };
@@ -99,5 +113,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'SAVE_FILE') {
     saveFile(msg).then(sendResponse);
     return true;
+  }
+  // "Open folder" in the popup: the file manager, with the file selected
+  if (msg && msg.type === 'SHOW_DOWNLOAD') {
+    chrome.downloads.show(msg.id);
+    sendResponse({ ok: true });
+    return false;
   }
 });

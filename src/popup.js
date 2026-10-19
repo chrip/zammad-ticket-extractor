@@ -51,8 +51,23 @@ async function saveSettings() {
   }
 }
 
+// The folder of the downloaded export, with a button that opens it.
+function showSavedTo(res) {
+  const box = document.getElementById('savedTo');
+  if (!box) return;
+  const path = res && res.exportPath;
+  box.classList.toggle('hidden', !path);
+  if (!path) return;
+  // the attachments' folder, or the downloads folder for a single file
+  document.getElementById('savedPath').textContent = path.replace(/[\\/][^\\/]*$/, '');
+  document.getElementById('openFolder').onclick = () => {
+    browser.runtime.sendMessage({ type: 'SHOW_DOWNLOAD', id: res.exportDownloadId }).catch(e => console.error('Open folder failed:', e));
+  };
+}
+
 async function runExtraction({ downloadJson }) {
   setStatus('Running…');
+  showSavedTo(null);
   try {
     const res = await browser.runtime.sendMessage({
       type: 'RUN_EXTRACTION',
@@ -97,6 +112,7 @@ async function runExtraction({ downloadJson }) {
       parts.push(`Agent roles not readable${res.apiError ? ` (${res.apiError})` : ''}, so agents were pseudonymized too.`);
     }
     const failed = !copied || (downloadJson && !res.downloadedJson) || Boolean(att && att.failed);
+    showSavedTo(res);
     setStatus(parts.join(' '), failed);
     return !failed;
   } catch (e) {

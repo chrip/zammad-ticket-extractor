@@ -115,6 +115,10 @@ With "Download attachments" on, "Download ... + attachments" saves into
 - archives, images and PDFs only with "Also archives, images, PDFs"; they are
   saved unchanged, NOT pseudonymized, and are marked so in the JSON
 
+Each attachment is listed with its absolute path, as the browser saved it, so
+the export can be handed to an AI tool that reads the files. After a download
+the popup shows the folder and an "Open folder" button.
+
 Inline images (signature logos) are skipped. Files above 40 MB are skipped.
 
 ## Installation
