@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS = {
   anonymize: false,
   downloadAttachments: false,
   includeBinary: false,
+  excludeInternal: false,
   keepAgents: true,
   // one host per line, edited in "Advanced"; defaults from pseudonymize.js
   publicHosts: DEFAULT_PUBLIC_HOSTS.join('\n'),
@@ -99,6 +100,7 @@ async function runExtraction({ downloadJson }) {
     const parts = [copied ? `Copied ${format} to clipboard.` : 'Failed to copy to clipboard.'];
     const label = format === 'JSON' ? 'JSON' : 'Text';
     if (downloadJson) parts.push(res.downloadedJson ? `${label} downloaded.` : `${label} download failed.`);
+    if (res.excludedInternal) parts.push(`${res.excludedInternal} internal note(s) left out.`);
     const att = res.attachments;
     if (att) {
       const counts = [`${att.saved} saved`];
@@ -184,6 +186,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   attachmentsToggle.checked = Boolean(currentSettings.downloadAttachments);
   binaryToggle.checked = Boolean(currentSettings.includeBinary);
+  const excludeInternalToggle = document.getElementById('excludeInternalToggle');
+  excludeInternalToggle.checked = Boolean(currentSettings.excludeInternal);
+  excludeInternalToggle.addEventListener('change', async (event) => {
+    currentSettings.excludeInternal = event.target.checked;
+    await saveSettings();
+  });
   syncControls();
   attachmentsToggle.addEventListener('change', async (event) => {
     currentSettings.downloadAttachments = event.target.checked;

@@ -11,6 +11,7 @@ async function extractAndCopy(options = {}) {
   // Attachments are saved next to the JSON, so only on download.
   const downloadAttachments = downloadJson && Boolean(options.downloadAttachments);
   const includeBinary = Boolean(options.includeBinary);
+  const excludeInternal = Boolean(options.excludeInternal);
 
   console.log('[EXTRACT] Starting extraction with options:', { copyFormat, anonymize, downloadJson, downloadAttachments, includeBinary });
 
@@ -514,6 +515,18 @@ async function extractAndCopy(options = {}) {
     }
   }
 
+  // Internal notes and internal system notifications, with their attachments:
+  // removed before anything is pseudonymized or saved.
+  let excludedInternal = 0;
+  if (excludeInternal) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].visibility === 'internal') {
+        messages.splice(i, 1);
+        excludedInternal++;
+      }
+    }
+  }
+
   let title = rawTitle;
   if (pseudo) {
     // DOM senders cover people the API did not return. The page's "agent" class
@@ -608,6 +621,7 @@ async function extractAndCopy(options = {}) {
     copiedFormat: copyFormat,
     anonymized: anonymize,
     attachments: attachmentStats,
+    excludedInternal,
     ticketAssetsLoaded: Boolean(ticketAll),
     apiError: apiErrors[0] || '',
     staffKnown

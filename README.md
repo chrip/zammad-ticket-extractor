@@ -92,6 +92,12 @@ Limits: a name that appears only in free text, without salutation and without
 being a ticket user, is not found. File names inside paths are kept. Check the
 output before you hand it to an external service.
 
+### Internal notes
+
+"Exclude internal notes" leaves out every article Zammad marks as internal:
+the team's notes, bot checklists and internal system notifications, with
+their attachments. The popup says how many were left out.
+
 ### Signatures
 
 Everything after the first farewell line of a message is cut, with or

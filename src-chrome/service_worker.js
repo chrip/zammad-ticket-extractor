@@ -10,6 +10,7 @@ async function runOnActiveTab(options = {}) {
     downloadJson: Boolean(options.downloadJson),
     downloadAttachments: Boolean(options.downloadAttachments),
     includeBinary: Boolean(options.includeBinary),
+    excludeInternal: Boolean(options.excludeInternal),
     keepAgents: options.keepAgents !== false,
     publicHosts: options.publicHosts || '',
     internalDomains: options.internalDomains || '',
