@@ -47,6 +47,8 @@ exists only while one export runs.
 | Phone numbers (international form or after "Tel", "Phone", ...) | `[phone-N]` |
 | User IDs in JSON logs, WebDAV and data directory paths | `user-N` |
 | Passwords, secrets, tokens, salts, `instanceid` in config dumps and logs | `[redacted]` |
+| Mail signatures after a farewell ("Best regards,", "Mit freundlichen Grüßen"): name, department, address, phones; form fields after it ("Severity: 4") stay | `[signature removed]` |
+| Street addresses and postal code + city lines in free text | `[street]`, `[postal code, city]` |
 
 Kept as is: support agents' first names, their surnames are dropped (switch off with "Keep support agent first names"), the support company's name and the protected
 words, loopback addresses, version numbers, URLs on public hosts, and the

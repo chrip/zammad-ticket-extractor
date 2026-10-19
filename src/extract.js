@@ -554,6 +554,9 @@ async function extractAndCopy(options = {}) {
     });
     // Names known only from a salutation in a later message count everywhere.
     pseudo.learn(rawTitle);
+    // Signatures go first: department, address and phone numbers in them are
+    // free text that no ticket record names.
+    messages.forEach(m => { if (m.role !== 'system') m.contentText = pseudo.stripSignature(m.contentText); });
     messages.forEach(m => pseudo.learn(m.contentText));
     title = pseudo.text(rawTitle);
     messages.forEach(m => {

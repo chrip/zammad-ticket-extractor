@@ -122,7 +122,9 @@ function createPseudonymizer(config = {}) {
       plain = plain.replace(rx, rep[0]);
     }
     out.add(ascii);
-    out.add(plain.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+    // letters NFD does not split: "Michał" is also written "Michal"
+    const extra = { 'ł': 'l', 'Ł': 'L', 'ø': 'o', 'Ø': 'O', 'đ': 'd', 'Đ': 'D', 'æ': 'ae', 'Æ': 'Ae', 'œ': 'oe', 'Œ': 'Oe', 'ı': 'i' };
+    out.add(plain.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[łŁøØđĐæÆœŒı]/g, c => extra[c]));
     return [...out];
   }
 
@@ -498,6 +500,12 @@ function createPseudonymizer(config = {}) {
       return hold(host(h)) + ext;
     });
 
+    // 8b. postal addresses in free text: "Musterstraße 1", "123 Main Street",
+    // and lines holding only a postal code and a city ("66666 Köln")
+    s = s.replace(/(?<![\p{L}\p{N}])\p{Lu}[\p{L}.-]*(?:straße|strasse|str\.|weg|allee|platz|gasse|damm|ufer|chaussee|steig|markt)\s+\d{1,4}\s?[a-zA-Z]?(?![\p{L}\p{N}])/gu, () => hold('[street]'));
+    s = s.replace(/(?<![\p{L}\p{N}])\d{1,5}\s+(?:\p{Lu}[\p{L}.-]*\s+){1,3}(?:Street|St\.|Avenue|Ave\.|Road|Rd\.|Boulevard|Blvd\.|Lane|Ln\.|Drive|Dr\.|Way|Court|Ct\.|Place|Pl\.)(?![\p{L}])/gu, () => hold('[street]'));
+    s = s.replace(/^([ \t]*)(?:(?:D|DE|A|AT|CH|F|FR|NL|B|L|PL)-)?\d{4,5}[ \t]+\p{Lu}[\p{L}.-]+(?:[ \t]+(?:\p{Lu}[\p{L}.-]*|\([^)\n]{1,20}\)|a\.?|am|an|bei|im|in|ob|der|die|den|de|sur|le|la))*[ \t]*$/gmu, (m, indent) => indent + hold('[postal code, city]'));
+
     // 9. phone numbers: international form, or after a label
     // "+49 ...", not "00...": in logs that is a process ID or a timestamp
     s = s.replace(/(?<![\w+])\+[1-9]\d{0,2}[\s./-]?(?:\(0\)[\s./-]?)?\d[\d\s./-]{5,16}\d(?!\w)/g, m => hold(addPhone(m) || m));
@@ -564,6 +572,36 @@ function createPseudonymizer(config = {}) {
 
   for (const w of config.protectedWords || []) addProtectedName(w);
 
-  return { addPerson, addOrganization, addProtectedName, addUserId, addPhone, addTerm, addInternalDomain, isInternal, learn, text, file, host, url };
+  // The signature after a farewell ("Thank you and best regards,") names the
+  // person, department, address and phone numbers. It is dropped up to the
+  // first line that is a form field but no contact field ("Severity: 4"),
+  // so ticket form fields after it stay.
+  const farewellRx = /\b(?:(?:best|kind|warm|warmest|many|with)\s+regards|regards|sincerely|cheers|thanks\s+and\s+regards|(?:viele|beste|liebe|herzliche|freundliche)\s+grü(?:ß|ss)e|mit\s+freundlichen\s+grü(?:ß|ss)en|grü(?:ß|ss)e|gru(?:ß|ss)|med\s+venlig\s+hilsen|cordialement|bien\s+à\s+vous|saluti|cordiali\s+saluti|met\s+vriendelijke\s+groet(?:en)?|saludos)[,.!]?(?:\s*,?\s*(?:\p{Lu}[\p{L}'.-]*\s*){1,3})?$/iu;
+  const contactLabelRx = /^\s*(?:tel\w*|telefon\w*|phone|fon|mobil\w*|mobile|handy|cell|fax|e-?mail|mail|web|www|internet|homepage|zentrale|durchwahl|office|büro|raum|room|abteilung|department|dept|referat|team|position|funktion|title|company|firma|organi[sz]ation|address|adresse|anschrift|sitz|registered|registergericht|amtsgericht|handelsregister|hrb|ust|vat|tax|steuer\w*|geschäftsführ\w*|managing|ceo|vorstand|aufsichtsrat)\b[^:\n]{0,25}:/iu;
+  const fieldRx = /^\s*\p{L}[\p{L}\p{N} ()/._-]{1,40}:\s*\S/u;
+  const quoteRx = /^\s*(?:-{2,}\s*(?:original|ursprüngliche)|(?:von|from|gesendet|sent|an|to):\s|on .{3,80} wrote:|am .{3,80} schrieb)/i;
+
+  function stripSignature(input) {
+    if (!input) return input;
+    const lines = String(input).split('\n');
+    let start = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim().length <= 80 && farewellRx.test(lines[i].trim())) start = i;
+    }
+    if (start === -1 || start === lines.length - 1) return input;
+    let end = start + 1;
+    while (end < lines.length) {
+      const line = lines[end];
+      if (quoteRx.test(line)) break;
+      if (fieldRx.test(line) && !contactLabelRx.test(line)) break;
+      end++;
+    }
+    // nothing but blank lines: nothing to drop
+    if (!lines.slice(start + 1, end).some(l => l.trim())) return input;
+    const after = lines.slice(end);
+    return [...lines.slice(0, start + 1), '[signature removed]', ...(after.length ? ['', ...after] : [])].join('\n');
+  }
+
+  return { addPerson, stripSignature, addOrganization, addProtectedName, addUserId, addPhone, addTerm, addInternalDomain, isInternal, learn, text, file, host, url };
 }
 

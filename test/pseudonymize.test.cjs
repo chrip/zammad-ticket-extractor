@@ -25,6 +25,44 @@ test('two exports share nothing: names, numbers, hosts', () => {
     'Customer-1, John Smith, cloud.domain1.example, cloud.domain2.example');
 });
 
+test('a signature after a farewell is dropped, form fields after it stay', () => {
+  const p = createPseudonymizer();
+  const msg = [
+    'we run it air-gapped.', '', 'Thank you and best regards,', 'Michal Kowalski', '',
+    '1234/Digitalisierung und Informationstechnik', '12/34 Architekturplanung und Webservices', 'Musterstraße 1', '66666 Köln', '',
+    'Telefon: +49 221 1234567', 'Mobil-Nr.: +49 171 7654321', 'E-Mail:   m.kowalski@city.example.org', '',
+    'Severity: 4 (We have a question)', '', 'Related topic: Files / Server'
+  ].join('\n');
+  assert.equal(p.stripSignature(msg), [
+    'we run it air-gapped.', '', 'Thank you and best regards,', '[signature removed]', '',
+    'Severity: 4 (We have a question)', '', 'Related topic: Files / Server'
+  ].join('\n'));
+});
+
+test('signature: farewell on one line with a name, German, and no cut mid-message', () => {
+  const p = createPseudonymizer();
+  assert.equal(p.stripSignature('Text\nBest regards, Anna Young\nACME Corp\nMain office'), 'Text\nBest regards, Anna Young\n[signature removed]');
+  assert.equal(p.stripSignature('Text\nMit freundlichen Grüßen\nAbteilung: IT\nHauptweg 3a\n12345 Bad Kreuznach'), 'Text\nMit freundlichen Grüßen\n[signature removed]');
+  const mid = 'With regards to your question, the log shows it.\nNext line stays.';
+  assert.equal(p.stripSignature(mid), mid);
+  assert.equal(p.stripSignature('Thanks!\nBest regards'), 'Thanks!\nBest regards');
+});
+
+test('addresses in free text', () => {
+  const p = createPseudonymizer();
+  assert.equal(p.text('Send it to Musterstraße 1 or Hauptweg 3a.'), 'Send it to [street] or [street].');
+  assert.equal(p.text('Office: 123 Main Street, Springfield'), 'Office: [street], Springfield');
+  assert.equal(p.text('Acme\n66666 Köln\nD-10115 Berlin\n12345 Frankfurt am Main'), 'Acme\n[postal code, city]\n[postal code, city]\n[postal code, city]');
+  assert.equal(p.text('We had 2000 Errors today and port 9980 Open'), 'We had 2000 Errors today and port 9980 Open');
+  assert.equal(p.text('Monitoring 2 failed, Spring 5 and Version 3 too'), 'Monitoring 2 failed, Spring 5 and Version 3 too');
+});
+
+test('names with letters NFD does not split', () => {
+  const p = createPseudonymizer();
+  p.addPerson({ firstname: 'Michał', lastname: 'Kowalski', role: 'customer' });
+  assert.equal(p.text('Michal Kowalski and Michał'), 'Customer-1 and Customer-1');
+});
+
 // A fictional support company "Supportco" (supportco.io) with a product "WidgetOffice".
 function setup() {
   const p = createPseudonymizer({ internalDomains: ['supportco.io'], publicHosts: ['help.supportco.io', 'github.com', 'forum.widgetoffice.org'] });
