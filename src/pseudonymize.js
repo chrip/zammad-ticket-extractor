@@ -19,6 +19,27 @@ var DEFAULT_PUBLIC_HOSTS = [
   'example.com', 'example.org', 'example.net', '*.example', '*.invalid', 'localhost'
 ];
 
+// Everything after the first farewell line goes: signature, footer, form
+// fields, quoted mails. None of it helps to understand the ticket, so none of
+// it needs pseudonymizing. The farewell line itself stays as the visible end.
+// A farewell starts its line ("Best regards from Berlin") or ends it ("Thank
+// you and best regards,", "Best regards, Anna"); a phrase mid-sentence ("With
+// regards to your question, ...") cuts nothing.
+// A function declaration: the file is injected again on every export.
+function stripSignature(input) {
+  if (!input) return input;
+  const phrase = '(?:(?:best|kind|warm|warmest|many|with)\\s+regards|regards|sincerely|cheers|thanks\\s+and\\s+regards|' +
+    '(?:viele|beste|liebe|herzliche|freundliche)\\s+grü(?:ß|ss)e|mit\\s+freundlichen\\s+grü(?:ß|ss)en|grü(?:ß|ss)e|gru(?:ß|ss)|' +
+    'med\\s+venlig\\s+hilsen|cordialement|bien\\s+à\\s+vous|cordiali\\s+saluti|saluti|met\\s+vriendelijke\\s+groet(?:en)?|saludos)';
+  // "Best regards from Berlin", not "Cheers for the log: it shows ..."
+  const startsLine = new RegExp(`^\\s*${phrase}(?![\\p{L}])[^\\n:?]{0,30}$`, 'iu');
+  const endsLine = new RegExp(`(?<![\\p{L}])${phrase}[,.!]?(?:\\s*,?\\s*(?:\\p{Lu}[\\p{L}'.-]*\\s*){1,3})?$`, 'iu');
+  const lines = String(input).split('\n');
+  const at = lines.findIndex(l => l.trim().length <= 80 && (startsLine.test(l) || endsLine.test(l.trim())));
+  if (at === -1) return input;
+  return lines.slice(0, at + 1).join('\n').trimEnd();
+}
+
 function createPseudonymizer(config = {}) {
   const hostPatterns = list => (list || []).map(d => String(d).trim().toLowerCase()).filter(Boolean);
   const publicHosts = hostPatterns(config.publicHosts || DEFAULT_PUBLIC_HOSTS);
@@ -571,36 +592,6 @@ function createPseudonymizer(config = {}) {
   }
 
   for (const w of config.protectedWords || []) addProtectedName(w);
-
-  // The signature after a farewell ("Thank you and best regards,") names the
-  // person, department, address and phone numbers. It is dropped up to the
-  // first line that is a form field but no contact field ("Severity: 4"),
-  // so ticket form fields after it stay.
-  const farewellRx = /\b(?:(?:best|kind|warm|warmest|many|with)\s+regards|regards|sincerely|cheers|thanks\s+and\s+regards|(?:viele|beste|liebe|herzliche|freundliche)\s+grü(?:ß|ss)e|mit\s+freundlichen\s+grü(?:ß|ss)en|grü(?:ß|ss)e|gru(?:ß|ss)|med\s+venlig\s+hilsen|cordialement|bien\s+à\s+vous|saluti|cordiali\s+saluti|met\s+vriendelijke\s+groet(?:en)?|saludos)[,.!]?(?:\s*,?\s*(?:\p{Lu}[\p{L}'.-]*\s*){1,3})?$/iu;
-  const contactLabelRx = /^\s*(?:tel\w*|telefon\w*|phone|fon|mobil\w*|mobile|handy|cell|fax|e-?mail|mail|web|www|internet|homepage|zentrale|durchwahl|office|büro|raum|room|abteilung|department|dept|referat|team|position|funktion|title|company|firma|organi[sz]ation|address|adresse|anschrift|sitz|registered|registergericht|amtsgericht|handelsregister|hrb|ust|vat|tax|steuer\w*|geschäftsführ\w*|managing|ceo|vorstand|aufsichtsrat)\b[^:\n]{0,25}:/iu;
-  const fieldRx = /^\s*\p{L}[\p{L}\p{N} ()/._-]{1,40}:\s*\S/u;
-  const quoteRx = /^\s*(?:-{2,}\s*(?:original|ursprüngliche)|(?:von|from|gesendet|sent|an|to):\s|on .{3,80} wrote:|am .{3,80} schrieb)/i;
-
-  function stripSignature(input) {
-    if (!input) return input;
-    const lines = String(input).split('\n');
-    let start = -1;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].trim().length <= 80 && farewellRx.test(lines[i].trim())) start = i;
-    }
-    if (start === -1 || start === lines.length - 1) return input;
-    let end = start + 1;
-    while (end < lines.length) {
-      const line = lines[end];
-      if (quoteRx.test(line)) break;
-      if (fieldRx.test(line) && !contactLabelRx.test(line)) break;
-      end++;
-    }
-    // nothing but blank lines: nothing to drop
-    if (!lines.slice(start + 1, end).some(l => l.trim())) return input;
-    const after = lines.slice(end);
-    return [...lines.slice(0, start + 1), '[signature removed]', ...(after.length ? ['', ...after] : [])].join('\n');
-  }
 
   return { addPerson, stripSignature, addOrganization, addProtectedName, addUserId, addPhone, addTerm, addInternalDomain, isInternal, learn, text, file, host, url };
 }

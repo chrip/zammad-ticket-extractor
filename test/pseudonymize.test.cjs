@@ -25,26 +25,24 @@ test('two exports share nothing: names, numbers, hosts', () => {
     'Customer-1, John Smith, cloud.domain1.example, cloud.domain2.example');
 });
 
-test('a signature after a farewell is dropped, form fields after it stay', () => {
+test('everything after the first farewell line is cut', () => {
   const p = createPseudonymizer();
   const msg = [
     'we run it air-gapped.', '', 'Thank you and best regards,', 'Michal Kowalski', '',
-    '1234/Digitalisierung und Informationstechnik', '12/34 Architekturplanung und Webservices', 'Musterstraße 1', '66666 Köln', '',
-    'Telefon: +49 221 1234567', 'Mobil-Nr.: +49 171 7654321', 'E-Mail:   m.kowalski@city.example.org', '',
+    '1234/Digitalisierung und Informationstechnik', 'Musterstraße 1', '66666 Köln', '',
+    'Telefon: +49 221 1234567', 'E-Mail:   m.kowalski@city.example.org', '',
     'Severity: 4 (We have a question)', '', 'Related topic: Files / Server'
   ].join('\n');
-  assert.equal(p.stripSignature(msg), [
-    'we run it air-gapped.', '', 'Thank you and best regards,', '[signature removed]', '',
-    'Severity: 4 (We have a question)', '', 'Related topic: Files / Server'
-  ].join('\n'));
+  assert.equal(p.stripSignature(msg), 'we run it air-gapped.\n\nThank you and best regards,');
 });
 
-test('signature: farewell on one line with a name, German, and no cut mid-message', () => {
+test('farewell forms: own line, with a name, German, first one wins, none mid-sentence', () => {
   const p = createPseudonymizer();
-  assert.equal(p.stripSignature('Text\nBest regards, Anna Young\nACME Corp\nMain office'), 'Text\nBest regards, Anna Young\n[signature removed]');
-  assert.equal(p.stripSignature('Text\nMit freundlichen Grüßen\nAbteilung: IT\nHauptweg 3a\n12345 Bad Kreuznach'), 'Text\nMit freundlichen Grüßen\n[signature removed]');
-  const mid = 'With regards to your question, the log shows it.\nNext line stays.';
-  assert.equal(p.stripSignature(mid), mid);
+  assert.equal(p.stripSignature('Text\nBest regards, Anna Young\nACME Corp'), 'Text\nBest regards, Anna Young');
+  assert.equal(p.stripSignature('Text\nBest regards from Berlin\nAnna'), 'Text\nBest regards from Berlin');
+  assert.equal(p.stripSignature('Text\nMit freundlichen Grüßen\nAbteilung IT\n\n> Am Montag schrieb X:\n> Viele Grüße\n> Y'), 'Text\nMit freundlichen Grüßen');
+  const keep = 'With regards to your question, the log shows it.\nRegarding the proxy: fine.\nCheers for the log: it shows a 403.\nNext line stays.';
+  assert.equal(p.stripSignature(keep), keep);
   assert.equal(p.stripSignature('Thanks!\nBest regards'), 'Thanks!\nBest regards');
 });
 

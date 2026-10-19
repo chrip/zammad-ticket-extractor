@@ -47,7 +47,6 @@ exists only while one export runs.
 | Phone numbers (international form or after "Tel", "Phone", ...) | `[phone-N]` |
 | User IDs in JSON logs, WebDAV and data directory paths | `user-N` |
 | Passwords, secrets, tokens, salts, `instanceid` in config dumps and logs | `[redacted]` |
-| Mail signatures after a farewell ("Best regards,", "Mit freundlichen Grüßen"): name, department, address, phones; form fields after it ("Severity: 4") stay | `[signature removed]` |
 | Street addresses and postal code + city lines in free text | `[street]`, `[postal code, city]` |
 
 Kept as is: support agents' first names, their surnames are dropped (switch off with "Keep support agent first names"), the support company's name and the protected
@@ -92,6 +91,14 @@ agent's session; if it is not readable, only the article senders are known.
 Limits: a name that appears only in free text, without salutation and without
 being a ticket user, is not found. File names inside paths are kept. Check the
 output before you hand it to an external service.
+
+### Signatures
+
+Everything after the first farewell line of a message is cut, with or
+without pseudonymization: signature, footer, form fields and quoted mails.
+A farewell starts its line ("Best regards from Berlin", "Mit freundlichen
+Grüßen") or ends it ("Thank you and best regards,", "Best regards, Anna");
+a phrase mid-sentence ("With regards to your question, ...") cuts nothing.
 
 ## Attachments
 

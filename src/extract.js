@@ -251,41 +251,8 @@ async function extractAndCopy(options = {}) {
 
     let txt = clone.textContent || "";
 
-    // Truncate at farewell markers - stop before signatures
-    const farewellPatterns = [
-      /(?:^|\n)\s*Grüße[^\S\r\n]*[A-ZÄÖÜa-zäöüß][^\n]*(?:\n|$)/i,
-      /(?:^|\n)\s*Viele Grüße[^\n]*(?:\n|$)/i,
-      /(?:^|\n)\s*Mit freundlichen Grüßen[^\n]*(?:\n|$)/i,
-      /(?:^|\n)\s*Best regards[^\n]*(?:\n|$)/i,
-      /(?:^|\n)\s*Kind regards[^\n]*(?:\n|$)/i,
-      /(?:^|\n)\s*Med venlig hilsen[^\n]*(?:\n|$)/i,
-      /(?:^|\n)\s*Sincerely[^\n]*(?:\n|$)/i,
-      /(?:^|\n)\s*Regards[^\n]*(?:\n|$)/i
-    ];
-
-    let earliestMatch = txt.length;
-    for (const pattern of farewellPatterns) {
-      const match = txt.match(pattern);
-      if (match && match.index !== undefined && match.index < earliestMatch) {
-        earliestMatch = match.index;
-      }
-    }
-
-    if (earliestMatch < txt.length) {
-      // Find the end of the farewell line - keep "Viele Grüße" but remove everything after
-      // The match starts at newline or start, so find where the farewell line ends
-      const matchText = txt.slice(earliestMatch);
-      // Find the end of the line containing the farewell
-      const lineEnd = matchText.indexOf('\n');
-      if (lineEnd >= 0) {
-        // Cut after the farewell line (keep the farewell, remove signature after)
-        const cutPoint = earliestMatch + lineEnd + 1;
-        txt = txt.slice(0, cutPoint).trimEnd();
-      } else {
-        // No newline after farewell, cut at the match point
-        txt = txt.slice(0, earliestMatch).trimEnd();
-      }
-    }
+    // Cut after the first farewell line (shared with the pseudonymizer tests)
+    txt = stripSignature(txt);
 
     // Remove common legal/signature patterns that might remain
     const legalPatterns = [
@@ -554,9 +521,6 @@ async function extractAndCopy(options = {}) {
     });
     // Names known only from a salutation in a later message count everywhere.
     pseudo.learn(rawTitle);
-    // Signatures go first: department, address and phone numbers in them are
-    // free text that no ticket record names.
-    messages.forEach(m => { if (m.role !== 'system') m.contentText = pseudo.stripSignature(m.contentText); });
     messages.forEach(m => pseudo.learn(m.contentText));
     title = pseudo.text(rawTitle);
     messages.forEach(m => {
