@@ -288,29 +288,10 @@ async function extractAndCopy(options = {}) {
     };
   }
 
-  // Expand ALL folded content - find and click all "See more" buttons
-  console.log('[EXTRACT] Looking for expand buttons...');
-  const expandButtons = ticketRoot.querySelectorAll('.js-toggleFold');
-  console.log('[EXTRACT] Found', expandButtons.length, 'expand buttons');
-  let clickedCount = 0;
-  expandButtons.forEach(btn => {
-    try {
-      const btnText = btn.textContent.trim().toLowerCase();
-      if (btnText.includes('see more')) {
-        btn.click();
-        clickedCount++;
-      }
-    } catch (e) {
-      console.error('[EXTRACT] Error clicking button:', e);
-    }
-  });
-  console.log('[EXTRACT] Clicked', clickedCount, 'buttons');
-  // Wait for all expansions to complete
-  if (clickedCount > 0) {
-    await new Promise(resolve => setTimeout(resolve, 300));
-  }
-  // Remove height restrictions on all articles
-  ticketRoot.querySelectorAll('.textBubble-content[style*="height"]').forEach(el => { el.style.removeProperty('height'); });
+  // The page is only read, never changed. "See more" is not clicked: the full
+  // article is in the DOM anyway, folding only limits the box height, and
+  // clicking the hidden button of a short, never measured article made Zammad
+  // animate its box to an undefined height, so it collapsed and looked empty.
 
   const rawTitle = (ticketRoot.querySelector('.js-objectTitle') || {}).textContent?.trim() || '';
   const number = ticketRoot.querySelector('.js-objectNumber')?.getAttribute('data-number')?.replace(/^Ticket#/, '') ||
@@ -571,17 +552,20 @@ async function extractAndCopy(options = {}) {
     textarea.style.position = 'fixed';
     textarea.style.left = '-999999px';
     textarea.style.top = '-999999px';
+    // Zammad must not notice: no scrolling, and focus goes back where it was.
+    const previousFocus = document.activeElement;
     document.body.appendChild(textarea);
-    textarea.focus();
+    textarea.focus({ preventScroll: true });
     textarea.select();
+    let success = false;
     try {
-      const success = document.execCommand('copy');
-      document.body.removeChild(textarea);
-      return success;
+      success = document.execCommand('copy');
     } catch (err) {
-      document.body.removeChild(textarea);
-      return false;
+      success = false;
     }
+    textarea.remove();
+    if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus({ preventScroll: true });
+    return success;
   }
 
   const jsonMessages = messages.map(m => {
